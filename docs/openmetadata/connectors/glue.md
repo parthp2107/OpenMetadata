@@ -50,11 +50,12 @@ metadata ingest -c ./examples/workflows/glue.json
 
 1. **aws_access_key_id** - pass the AWS access key.
 2. **aws_secret_access_key** - pass the AWS secret access key.
-3. **service\_name** - Service Name for this Glue cluster.
-4. **filter\_pattern** - It contains includes, excludes options to choose which pattern of datasets you want to ingest into OpenMetadata
-5. **data\_profiler\_enabled** - Enable data-profiling (Optional). It will provide you the newly ingested data.
-6. **data\_profiler\_offset** - Specify offset.
-7. **data\_profiler\_limit** - Specify limit.
+3. **database -** Database name from where data is to be fetched.
+4. **region_name -** Region name where the AWS instance is located.
+5. **endpoint_url -** The URL of the entry point for an AWS web service.
+6. **service\_name** - Service Name for this Glue cluster.
+7. **filter\_pattern** - It contains includes, excludes options to choose which pattern of datasets 
+you want to ingest into OpenMetadata
 
 ## Publish to OpenMetadata
 
