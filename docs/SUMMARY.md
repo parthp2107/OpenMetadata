@@ -11,6 +11,7 @@
   * [BigQuery](openmetadata/connectors/bigquery.md)
   * [BigQuery Usage](openmetadata/connectors/bigquery-usage.md)
   * [ElasticSearch](openmetadata/connectors/elastic-search.md)
+  * [Glue](openmetadata/connectors/glue.md)
   * [Hive](openmetadata/connectors/hive.md)
   * [Kafka](openmetadata/connectors/kafka.md)
   * [Looker](openmetadata/connectors/looker.md)
