@@ -32,7 +32,6 @@ services:
     environment:
       - discovery.type=single-node
       - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
-
     networks:
       app_net:
         ipv4_address: 172.16.240.11

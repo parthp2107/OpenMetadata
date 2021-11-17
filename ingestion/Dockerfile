@@ -10,15 +10,20 @@ RUN mkdir /om-airflow
 RUN mv plugins /om-airflow
 ENV AIRFLOW_VERSION=2.2.1
 ENV CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-3.9.txt"
-RUN pip install "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}"
+RUN pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" 
+RUN pip install "openmetadata-ingestion[all]" openmetadata-airflow-managed-apis
 COPY ingestion /ingestion
-RUN pip install -e '.[all]' openmetadata-airflow-managed-apis
 RUN airflow db init
+RUN mkdir -p /examples/airflow/dags
+RUN cp -r /ingestion/examples/airflow/dags /examples/airflow/dags
 RUN cp -r /ingestion/examples/airflow/airflow.cfg /airflow/airflow.cfg
+RUN cp -r /ingestion/ingestion_dependency.sh /ingestion_dependency.sh
+RUN rm -rf /ingestion
 RUN cp -r /om-airflow/plugins /airflow/plugins
 RUN cp -r /om-airflow/plugins/dag_templates /airflow/
 RUN mkdir -p /airflow/dag_generated_configs
 RUN cp -r /om-airflow/plugins/dag_managed_operators /airflow/
-RUN chmod 755 ingestion_dependency.sh
+WORKDIR /
+RUN chmod 755 /ingestion_dependency.sh
 EXPOSE 8080
 CMD [ "./ingestion_dependency.sh" ]
