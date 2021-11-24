@@ -1,6 +1,6 @@
 name: Build and Deploy
 on:
-  push:
+  pull_request_target:
     branches:
       - 0.6.0
     paths:
@@ -21,7 +21,7 @@ jobs:
           branch: docs-workflow
           labels: |
             cherry-pick
-          author: parthp2107 <parth.panchal@deuexsolutions.com>
+#           author: parthp2107 <parth.panchal@deuexsolutions.com>
           reviewers: |
             parthp2107
 env:
