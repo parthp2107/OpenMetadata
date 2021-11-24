@@ -17,5 +17,6 @@ jobs:
         uses: gorillio/github-action-cherry-pick@master
         with:
           pr_branch: 'docs-workflow'
+          assignnes: parthp2107
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
