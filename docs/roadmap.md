@@ -1,6 +1,6 @@
 # Roadmap
 
-Here is the OpenMetadata Roadmap for the next 3 releases.
+Test example Here is the OpenMetadata Roadmap for the next 3 releases.
 
 We are doing a monthly release and we are going to evolve fast and adapt to community needs. Below roadmap is subject to change based on community needs and feedback. our roadmap yet, please file an Issue [Github](https://github.com/open-metadata/OpenMetadata/issues) or ping us on [Slack](https://slack.open-metadata.org)
 
@@ -83,7 +83,7 @@ If you would like to prioritize any feature or would like to add a new feature t
 ### Airflow APIs
 
 * Airflow APIs to deploy DAGS and manage them
-* UI integration to deploy ingestion workflows&#x20;
+* UI integration to deploy ingestion workflows
 
 ## 0.7 Release - Dec 15th, 2021
 
