@@ -8,7 +8,7 @@ description: >-
 
 ## Requirements
 
-Nature Please ensure your host system meets the requirements listed below. Then continue to the Procedure for installing OpenMetadata.
+Nature test Please ensure your host system meets the requirements listed below. Then continue to the Procedure for installing OpenMetadata.
 
 ### Python (version 3.8.0 or greater)
 
