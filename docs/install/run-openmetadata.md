@@ -6,7 +6,27 @@ description: >-
 
 # Run OpenMetadata
 
-## Run Docker (Latest Release)
+## Requirements
+
+Nature test Please ensure your host system meets the requirements listed below. Then continue to the Procedure for installing OpenMetadata.
+
+### Python (version 3.8.0 or greater)
+
+To check what version of Python you have, please use the following command.
+
+```
+python3 --version
+```
+
+### pip (version 19.2.3 or greater)
+
+The version of pip (pip3) that ships with Python 3.8.x is 19.2.3. You will need this version or later to install OpenMetadata. You can check what version of pip you have by running the following command.
+
+```
+pip3 --version
+```
+
+### Docker (version 20.10.0 or greater)
 
 [Docker](https://docs.docker.com/get-started/overview/) is an open platform for developing, shipping, and running applications that enables you to separate your applications from your infrastructure so you can deliver software quickly using OS-level virtualization to deliver software in packages called containers.
 
