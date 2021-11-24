@@ -8,7 +8,7 @@ description: >-
 
 ### Discover Your Data
 
-OpenMetadata enables you to discover your data using a variety of strategies, including: keyword search, data associations (e.g., frequently joined tables, lineage), and complex queries. Using OpenMetadata you can search across tables, topics, dashboards, pipelines, and services. The OpenMetadata standard and discovery UI provides for fine-grained and detailed metadata for assets and a their components (e.g., columns, charts), including support for complex data types such as arrays and structs.
+TESTING OpenMetadata enables you to discover your data using a variety of strategies, including: keyword search, data associations (e.g., frequently joined tables, lineage), and complex queries. Using OpenMetadata you can search across tables, topics, dashboards, pipelines, and services. The OpenMetadata standard and discovery UI provides for fine-grained and detailed metadata for assets and a their components (e.g., columns, charts), including support for complex data types such as arrays and structs.
 
 #### Keyword Search
 
@@ -84,11 +84,11 @@ See the [Connectors](install/metadata-ingestion/connectors/) documentation for i
 
 ### Metadata Versioning & Events API
 
-Starting in 0.6, OpenMetadata captures changes in both technical metadata (e.g., table schemas) and business metadata (e.g., tags, ownership, descriptions) as new versions of an entity. Metadata changes generate events that indicates which entity changed, who changed it, and how it changed. You may use these events to integrate metadata into other tools or trigger actions.&#x20;
+Starting in 0.6, OpenMetadata captures changes in both technical metadata (e.g., table schemas) and business metadata (e.g., tags, ownership, descriptions) as new versions of an entity. Metadata changes generate events that indicates which entity changed, who changed it, and how it changed. You may use these events to integrate metadata into other tools or trigger actions.
 
 #### Metadata Versioning
 
-OpenMetadata maintains the version history for all entities using a number with the format _major.minor_, starting with 0.1 as the initial version of an entity.&#x20;
+OpenMetadata maintains the version history for all entities using a number with the format _major.minor_, starting with 0.1 as the initial version of an entity.
 
 Changes in metadata result in version changes as follows:
 
@@ -103,7 +103,7 @@ Versioning also helps in **broader collaboration** among consumers and producers
 
 #### Events API
 
-Starting in the 0.6 release, OpenMetadata captures changes in both technical metadata (e.g., table schemas) and business metadata (e.g., tags, ownership, descriptions) as change events. This lays the groundwork for notifications. In an upcoming release we will add support for push based events, enabling applications to register webhooks to be notified of change events. We will also enable users to subscribe to notifications and alerts for assets of interest. &#x20;
+Starting in the 0.6 release, OpenMetadata captures changes in both technical metadata (e.g., table schemas) and business metadata (e.g., tags, ownership, descriptions) as change events. This lays the groundwork for notifications. In an upcoming release we will add support for push based events, enabling applications to register webhooks to be notified of change events. We will also enable users to subscribe to notifications and alerts for assets of interest.
 
 ### One-Click Ingestion Pipelines
 
