@@ -10,7 +10,6 @@ jobs:
   cherry_pick_release_v2_0:
     runs-on: ubuntu-latest
     name: Cherry pick into release-v2.0
-    if: contains(github.event.push.labels.*.name, 'docs-workflow')
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -22,6 +21,7 @@ jobs:
           branch: docs-workflow
           labels: |
             cherry-pick
+          author: parthp2107 <parth.panchal@deuexsolutions.com>
           reviewers: |
             parthp2107
 env:
