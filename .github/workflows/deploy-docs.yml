@@ -7,18 +7,21 @@ on:
       - 'docs/**'
 
 jobs:
-  build-and-deploy:
+  cherry_pick_release_v2_0:
     runs-on: ubuntu-latest
+    name: Cherry pick into release-v2.0
     steps:
-      - name: Checkout 🛎️
-        uses: actions/checkout@v2.3.1
+      - name: Checkout
+        uses: actions/checkout@v2
         with:
-          persist-credentials: false
-
-      - name: Deploy 🚀
-        uses: JamesIves/github-pages-deploy-action@4.1.6
+          fetch-depth: 0
+      - name: Cherry pick into release-v2.0
+        uses: carloscastrojumo/github-cherry-pick-action@v1.0.1
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH: docs-workflow
-          FOLDER: docs
-          target-folder: docs
+          branch: docs-workflow
+          labels: |
+            cherry-pick
+          reviewers: |
+            parthp2107
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
