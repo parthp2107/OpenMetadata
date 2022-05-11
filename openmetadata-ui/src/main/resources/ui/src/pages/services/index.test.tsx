@@ -62,6 +62,7 @@ jest.mock('../../authentication/auth-provider/AuthProvider', () => {
 
 jest.mock('../../utils/RouterUtils', () => ({
   getAddServicePath: jest.fn(),
+  getServicesWithTabPath: jest.fn(),
 }));
 
 jest.mock('../../axiosAPIs/serviceAPI', () => ({
@@ -191,10 +192,7 @@ describe('Test Service page', () => {
       'service-description'
     );
     const type = await findAllByTestId(container, 'service-type');
-    const deleteIcon = await findAllByTestId(
-      container,
-      'delete-icon-container'
-    );
+
     const icon = await findAllByTestId(container, 'service-icon');
 
     expect(tabs[0]).toHaveClass('activeCategory');
@@ -203,7 +201,6 @@ describe('Test Service page', () => {
       mockDatabaseService.data.data.length
     );
     expect(type.length).toBe(mockDatabaseService.data.data.length);
-    expect(deleteIcon.length).toBe(mockDatabaseService.data.data.length);
     expect(icon.length).toBe(mockDatabaseService.data.data.length);
   });
 });

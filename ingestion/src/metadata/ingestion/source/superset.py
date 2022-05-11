@@ -13,7 +13,6 @@ Superset source module
 """
 
 import json
-import logging
 import traceback
 from typing import Iterable
 
@@ -45,8 +44,10 @@ from metadata.ingestion.api.source import InvalidSourceException, Source, Source
 from metadata.ingestion.models.table_metadata import Chart, Dashboard, DashboardOwner
 from metadata.ingestion.ometa.ometa_api import OpenMetadata
 from metadata.ingestion.ometa.superset_rest import SupersetAPIClient
+from metadata.utils.connections import get_connection, test_connection
+from metadata.utils.logger import ingestion_logger
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger = ingestion_logger()
 
 
 def get_metric_name(metric):
@@ -184,7 +185,8 @@ class SupersetSource(Source[Entity]):
         self.metadata = OpenMetadata(self.metadata_config)
 
         self.status = SourceStatus()
-        self.client = SupersetAPIClient(self.config)
+        self.connection = get_connection(self.service_connection)
+        self.client = self.connection.client
         self.service = self.metadata.get_service_or_create(
             entity=DashboardService, config=config
         )
@@ -301,7 +303,7 @@ class SupersetSource(Source[Entity]):
                         yield lineage
 
                 except Exception as err:
-                    logger.debug(traceback.print_exc())
+                    logger.debug(traceback.format_exc())
                     logger.error(err)
 
     # pylint: disable=too-many-locals

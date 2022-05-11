@@ -8,7 +8,6 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-import logging
 import os
 from typing import Optional, Tuple
 
@@ -39,8 +38,9 @@ from metadata.ingestion.api.source import InvalidSourceException
 from metadata.ingestion.source.sql_source import SQLSource
 from metadata.utils.column_type_parser import create_sqlalchemy_type
 from metadata.utils.helpers import get_start_and_end
+from metadata.utils.logger import ingestion_logger
 
-logger = logging.getLogger(__name__)
+logger = ingestion_logger()
 GEOGRAPHY = create_sqlalchemy_type("GEOGRAPHY")
 _types._type_map["GEOGRAPHY"] = GEOGRAPHY
 
@@ -151,9 +151,8 @@ class BigquerySource(SQLSource):
                 return TableData(columns=cols, rows=rows)
             except Exception as err:
                 logger.error(err)
-                return []
-
-        super().fetch_sample_data(schema, table)
+        else:
+            return super().fetch_sample_data(schema, table)
 
     def _get_database(self, database: Optional[str]) -> Database:
         if not database:

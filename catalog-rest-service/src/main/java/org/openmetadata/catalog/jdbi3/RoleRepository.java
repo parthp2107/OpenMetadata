@@ -37,7 +37,6 @@ import org.openmetadata.catalog.type.Relationship;
 import org.openmetadata.catalog.util.EntityInterface;
 import org.openmetadata.catalog.util.EntityUtil;
 import org.openmetadata.catalog.util.EntityUtil.Fields;
-import org.openmetadata.catalog.util.FullyQualifiedName;
 import org.openmetadata.catalog.util.JsonUtils;
 import org.openmetadata.catalog.util.ResultList;
 
@@ -169,7 +168,7 @@ public class RoleRepository extends EntityRepository<Role> {
 
     @Override
     public String getFullyQualifiedName() {
-      return FullyQualifiedName.build(entity.getName());
+      return entity.getName();
     }
 
     @Override
@@ -286,16 +285,6 @@ public class RoleRepository extends EntityRepository<Role> {
         Role updatedDefaultRole = roleRepository.get(null, defaultRole.getId().toString(), Fields.EMPTY_FIELDS);
         updatedDefaultRole = updatedDefaultRole.withDefaultRole(false);
         new RoleUpdater(origDefaultRole, updatedDefaultRole, Operation.PATCH).update();
-      }
-      List<User> users = getAllUsers();
-      if (users.isEmpty()) {
-        return;
-      }
-      LOG.info("Creating 'user --- has ---> role' relationship for {} role", role.getName());
-      for (User user : users) {
-        daoCollection
-            .relationshipDAO()
-            .insert(user.getId(), role.getId(), Entity.USER, Entity.ROLE, Relationship.HAS.ordinal());
       }
     }
 

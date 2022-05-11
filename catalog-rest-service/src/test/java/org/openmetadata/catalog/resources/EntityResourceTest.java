@@ -13,6 +13,7 @@
 
 package org.openmetadata.catalog.resources;
 
+import static java.lang.String.format;
 import static javax.ws.rs.core.Response.Status.BAD_REQUEST;
 import static javax.ws.rs.core.Response.Status.CONFLICT;
 import static javax.ws.rs.core.Response.Status.CREATED;
@@ -123,7 +124,6 @@ import org.openmetadata.catalog.type.Include;
 import org.openmetadata.catalog.type.TagLabel;
 import org.openmetadata.catalog.util.EntityInterface;
 import org.openmetadata.catalog.util.EntityUtil;
-import org.openmetadata.catalog.util.FullyQualifiedName;
 import org.openmetadata.catalog.util.JsonUtils;
 import org.openmetadata.catalog.util.ResultList;
 import org.openmetadata.catalog.util.TestUtils;
@@ -224,12 +224,11 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
     this.entityListClass = entityListClass;
     this.collectionName = collectionName;
     this.allFields = fields;
-
+    ENTITY_RESOURCE_TEST_MAP.put(entityType, this);
     List<String> allowedFields = Entity.getEntityFields(entityClass);
     this.supportsFollowers = allowedFields.contains(FIELD_FOLLOWERS);
     this.supportsOwner = allowedFields.contains(FIELD_OWNER);
     this.supportsTags = allowedFields.contains(FIELD_TAGS);
-    ENTITY_RESOURCE_TEST_MAP.put(entityType, this);
   }
 
   @BeforeAll
@@ -340,7 +339,7 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
     T entity = createEntity(createRequest(test, 0), ADMIN_AUTH_HEADERS);
     EntityInterface<T> entityInterface = getEntityInterface(entity);
 
-    String allFields = String.join(",", Entity.getEntityFields(entityClass));
+    String allFields = String.join(",", Entity.getAllowedFields(entityClass));
 
     // GET an entity by ID with all the field names of an entity should be successful
     getEntity(entityInterface.getId(), allFields, ADMIN_AUTH_HEADERS);
@@ -377,11 +376,12 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
     List<UUID> createdUUIDs = new ArrayList<>();
     for (int i = 0; i < maxEntities; i++) {
       createdUUIDs.add(
-          getEntityInterface(createEntity(createRequest(getEntityName(test, i), "", null, null), ADMIN_AUTH_HEADERS))
+          getEntityInterface(
+                  createEntity(createRequest(getEntityName(test, i + 1), "", null, null), ADMIN_AUTH_HEADERS))
               .getId());
     }
 
-    T entity = createEntity(createRequest(getEntityName(test, -1), "", null, null), ADMIN_AUTH_HEADERS);
+    T entity = createEntity(createRequest(getEntityName(test, 0), "", null, null), ADMIN_AUTH_HEADERS);
     EntityInterface<T> deleted = getEntityInterface(entity);
     deleteAndCheckEntity(entity, ADMIN_AUTH_HEADERS);
 
@@ -392,6 +392,7 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
         };
 
     // Test listing entities that include deleted, non-deleted, and all the entities
+    Random random = new Random();
     for (String include : List.of("non-deleted", "all", "deleted")) {
       if (!supportsSoftDelete && include.equals("deleted")) {
         continue;
@@ -404,9 +405,9 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
       int totalRecords = allEntities.getData().size();
       printEntities(allEntities);
 
-      // List entity with "limit" set from 1 to maxTables size
+      // List entity with "limit" set from 1 to maxTables size with random jumps (to reduce the test time)
       // Each time compare the returned list with allTables list to make sure right results are returned
-      for (int limit = 1; limit < maxEntities; limit++) {
+      for (int limit = 1; limit < maxEntities; limit += random.nextInt(5) + 1) {
         String after = null;
         String before;
         int pageCount = 0;
@@ -415,7 +416,7 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
         ResultList<T> backwardPage;
         boolean foundDeleted = false;
         do { // For each limit (or page size) - forward scroll till the end
-          LOG.info("Limit {} forward scrollCount {} afterCursor {}", limit, pageCount, after);
+          LOG.debug("Limit {} forward scrollCount {} afterCursor {}", limit, pageCount, after);
           forwardPage = listEntities(queryParams, limit, null, after, ADMIN_AUTH_HEADERS);
           foundDeleted = forwardPage.getData().stream().anyMatch(matchDeleted) || foundDeleted;
           after = forwardPage.getPaging().getAfter();
@@ -446,7 +447,7 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
         indexInAllTables = totalRecords - limit - forwardPage.getData().size();
         foundDeleted = false;
         do {
-          LOG.info("Limit {} backward scrollCount {} beforeCursor {}", limit, pageCount, before);
+          LOG.debug("Limit {} backward scrollCount {} beforeCursor {}", limit, pageCount, before);
           forwardPage = listEntities(queryParams, limit, before, null, ADMIN_AUTH_HEADERS);
           foundDeleted = forwardPage.getData().stream().anyMatch(matchDeleted) || foundDeleted;
           printEntities(forwardPage);
@@ -710,7 +711,7 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
   @Test
   void post_entityWithDots_200() throws HttpResponseException {
     // Entity without "." should not have quoted fullyQualifiedName
-    String name = String.format("%s_foo_bar", entityType);
+    String name = format("%s_foo_bar", entityType);
     K request = createRequest(name, "", null, null);
     T entity = createEntity(request, ADMIN_AUTH_HEADERS);
     EntityInterface<T> entityInterface = getEntityInterface(entity);
@@ -721,11 +722,14 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
     request = createRequest(name, "", null, null);
     entity = createEntity(request, ADMIN_AUTH_HEADERS);
     entityInterface = getEntityInterface(entity);
-    assertTrue(entityInterface.getFullyQualifiedName().contains("\""));
-    String[] split = FullyQualifiedName.split(entityInterface.getFullyQualifiedName());
-    String actualName = split[split.length - 1];
+
+    // The FQN has quote delimited parts if the FQN is hierarchical.
+    // For entities where FQN is same as the entity name, (that is no hierarchical name for entities like user,
+    // team, webhook and the entity names that are at the root for FQN like services, TagCategory, and Glossary etc.)
+    // No delimiter is expected.
+    boolean noHierarchicalName = entityInterface.getFullyQualifiedName().equals(entityInterface.getName());
+    assertTrue(noHierarchicalName || entityInterface.getFullyQualifiedName().contains("\""));
     assertEquals(name, entityInterface.getName());
-    assertEquals(FullyQualifiedName.quoteName(name), actualName);
   }
 
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1421,6 +1425,7 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
     }
   }
 
+  /** Helper function to generate JSON PATCH, submit PATCH API request and validate response. */
   protected final T patchEntityAndCheck(
       T updated,
       String originalJson,
@@ -1428,22 +1433,10 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
       UpdateType updateType,
       ChangeDescription expectedChange)
       throws IOException {
-    return patchEntityAndCheck(updated, originalJson, authHeaders, updateType, expectedChange, updated);
-  }
-
-  /** Helper function to generate JSON PATCH, submit PATCH API request and validate response. */
-  protected final T patchEntityAndCheck(
-      T updated,
-      String originalJson,
-      Map<String, String> authHeaders,
-      UpdateType updateType,
-      ChangeDescription expectedChange,
-      T update)
-      throws IOException {
     EntityInterface<T> entityInterface = getEntityInterface(updated);
 
     // Validate information returned in patch response has the updates
-    T returned = patchEntity(entityInterface.getId(), originalJson, update, authHeaders);
+    T returned = patchEntity(entityInterface.getId(), originalJson, updated, authHeaders);
     entityInterface = getEntityInterface(returned);
 
     compareEntities(updated, returned, authHeaders);
@@ -1472,7 +1465,7 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
     String originalJson = JsonUtils.pojoToJson(entity);
 
     String originalDescription = entityInterface.getDescription();
-    String newDescription = String.format("Description added by %s", userName);
+    String newDescription = format("Description added by %s", userName);
     ChangeDescription change = getChangeDescription(entityInterface.getVersion());
     change
         .getFieldsUpdated()
@@ -1815,8 +1808,8 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
   }
 
   private void printEntities(ResultList<T> list) {
-    list.getData().forEach(e -> LOG.info("{} {}", entityClass, getEntityInterface(e).getFullyQualifiedName()));
-    LOG.info("before {} after {} ", list.getPaging().getBefore(), list.getPaging().getAfter());
+    list.getData().forEach(e -> LOG.debug("{} {}", entityClass, getEntityInterface(e).getFullyQualifiedName()));
+    LOG.debug("before {} after {} ", list.getPaging().getBefore(), list.getPaging().getAfter());
   }
 
   public void assertEntityDeleted(EntityInterface<T> entityInterface, boolean hardDelete) {
@@ -1880,10 +1873,31 @@ public abstract class EntityResourceTest<T, K> extends CatalogApplicationTest {
   }
 
   public final String getEntityName(TestInfo test) {
-    return String.format("%s_%s", entityType, test.getDisplayName().replaceAll("\\(.*\\)", ""));
+    return format("%s_%s", entityType, test.getDisplayName().replaceAll("\\(.*\\)", ""));
   }
 
+  /**
+   * Generates and entity name by adding a char from a-z to ensure alphanumeric ordering In alphanumeric ordering using
+   * numbers can be counterintuitive (e.g :entity_0_test < entity_10_test < entity_1_test is the correct ordering of
+   * these 3 strings)
+   */
   public final String getEntityName(TestInfo test, int index) {
-    return String.format("%s_%d_%s", entityType, index, test.getDisplayName().replaceAll("\\(.*\\)", ""));
+    return format(
+        "%s_%s_%s", entityType, getNthAlphanumericString(index), test.getDisplayName().replaceAll("\\(.*\\)", ""));
+  }
+
+  /**
+   * Transforms a positive integer to base 26 using digits a...z Alphanumeric ordering of results is equivalent to
+   * ordering of inputs
+   */
+  private String getNthAlphanumericString(int index) {
+    final int N_LETTERS = 26;
+    if (index < 0) {
+      throw new IllegalArgumentException(format("Index must be positive, cannot be %d", index));
+    }
+    if (index < 26) {
+      return String.valueOf((char) ('a' + index));
+    }
+    return getNthAlphanumericString(index / N_LETTERS) + (char) ('a' + (index % N_LETTERS));
   }
 }

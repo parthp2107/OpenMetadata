@@ -16,7 +16,6 @@ package org.openmetadata.catalog.resources.services.ingestionpipelines;
 import static javax.ws.rs.core.Response.Status.BAD_REQUEST;
 import static javax.ws.rs.core.Response.Status.OK;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.openmetadata.catalog.Entity.FIELD_OWNER;
 import static org.openmetadata.catalog.util.TestUtils.ADMIN_AUTH_HEADERS;
@@ -56,6 +55,7 @@ import org.openmetadata.catalog.metadataIngestion.DashboardServiceMetadataPipeli
 import org.openmetadata.catalog.metadataIngestion.DatabaseServiceMetadataPipeline;
 import org.openmetadata.catalog.metadataIngestion.DatabaseServiceQueryUsagePipeline;
 import org.openmetadata.catalog.metadataIngestion.FilterPattern;
+import org.openmetadata.catalog.metadataIngestion.LogLevels;
 import org.openmetadata.catalog.metadataIngestion.MessagingServiceMetadataPipeline;
 import org.openmetadata.catalog.metadataIngestion.SourceConfig;
 import org.openmetadata.catalog.resources.EntityResourceTest;
@@ -89,6 +89,7 @@ public class IngestionPipelineResourceTest extends EntityResourceTest<IngestionP
         IngestionPipelineResource.IngestionPipelineList.class,
         "services/ingestionPipelines",
         IngestionPipelineResource.FIELDS);
+    this.supportsEmptyDescription = false;
   }
 
   @BeforeAll
@@ -198,17 +199,6 @@ public class IngestionPipelineResourceTest extends EntityResourceTest<IngestionP
   }
 
   @Test
-  void post_IngestionPipelineWithDeploy_4xx(TestInfo test) {
-    CreateIngestionPipeline create =
-        createRequest(test)
-            .withService(BIGQUERY_REFERENCE)
-            .withAirflowConfig(new AirflowConfig().withStartDate("2021-11-21").withForceDeploy(true));
-    HttpResponseException exception =
-        assertThrows(HttpResponseException.class, () -> createEntity(create, ADMIN_AUTH_HEADERS));
-    // TODO check for error
-  }
-
-  @Test
   void post_AirflowWithDifferentService_200_ok(TestInfo test) throws IOException {
     EntityReference[] differentServices = {REDSHIFT_REFERENCE, BIGQUERY_REFERENCE};
 
@@ -249,6 +239,7 @@ public class IngestionPipelineResourceTest extends EntityResourceTest<IngestionP
     assertEquals(pipelineConcurrency, ingestion.getAirflowConfig().getConcurrency());
     assertEquals(expectedFQN, ingestion.getFullyQualifiedName());
     assertEquals(expectedScheduleInterval, ingestion.getAirflowConfig().getScheduleInterval());
+    assertEquals(LogLevels.INFO, ingestion.getLoggerLevel());
     ingestion = getEntity(ingestion.getId(), FIELD_OWNER, ADMIN_AUTH_HEADERS);
     assertEquals(expectedScheduleInterval, ingestion.getAirflowConfig().getScheduleInterval());
   }
@@ -333,6 +324,7 @@ public class IngestionPipelineResourceTest extends EntityResourceTest<IngestionP
         updateIngestionPipeline(
             request
                 .withSourceConfig(updatedSourceConfig)
+                .withLoggerLevel(LogLevels.ERROR)
                 .withAirflowConfig(
                     new AirflowConfig()
                         .withConcurrency(pipelineConcurrency)
@@ -344,6 +336,9 @@ public class IngestionPipelineResourceTest extends EntityResourceTest<IngestionP
     assertEquals(pipelineConcurrency, ingestion.getAirflowConfig().getConcurrency());
     assertEquals(expectedFQN, ingestion.getFullyQualifiedName());
     assertEquals(expectedScheduleInterval, ingestion.getAirflowConfig().getScheduleInterval());
+
+    assertEquals(LogLevels.ERROR, updatedIngestion.getLoggerLevel());
+
     validateSourceConfig(updatedSourceConfig, updatedIngestion.getSource().getSourceConfig(), ingestion);
   }
 
@@ -497,10 +492,14 @@ public class IngestionPipelineResourceTest extends EntityResourceTest<IngestionP
     DatabaseService databaseService =
         Entity.getEntity(ingestionPipeline.getService(), Fields.EMPTY_FIELDS, Include.ALL);
     DatabaseConnection databaseConnection = databaseService.getConnection();
+    Map<String, String> advConfig = new HashMap<>();
+    advConfig.put("hive.execution.engine", "tez");
+    advConfig.put("tez.queue.name", "tez");
     ConnectionArguments connectionArguments =
         new ConnectionArguments()
             .withAdditionalProperty("credentials", "/tmp/creds.json")
-            .withAdditionalProperty("client_email", "ingestion-bot@domain.com");
+            .withAdditionalProperty("client_email", "ingestion-bot@domain.com")
+            .withAdditionalProperty("configuration", advConfig);
     ConnectionOptions connectionOptions =
         new ConnectionOptions().withAdditionalProperty("key1", "value1").withAdditionalProperty("key2", "value2");
     BigQueryConnection bigQueryConnection =
