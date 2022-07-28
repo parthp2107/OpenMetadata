@@ -145,6 +145,20 @@ authenticationConfiguration:
   callbackUrl: ${AUTHENTICATION_CALLBACK_URL:-""}
   jwtPrincipalClaims: ${AUTHENTICATION_JWT_PRINCIPAL_CLAIMS:-[email,preferred_username,sub]}
 
+samlConfiguration:
+  idp:
+    entityId: ${SAML_IDP_ENTITY_ID:-"http://localhost:8080/realms/open-metadata"}
+    ssoLoginUrl: ${SAML_IDP_SSO_LOGIN_URL:-"http://localhost:8080/realms/open-metadata/protocol/saml"}
+    ssoLogoutUrl: ${SAML_IDP_SSO_LOGOUT_URL:-"http://localhost:8080/realms/open-metadata/protocol/saml"}
+    idpX509Certificate: ${SAML_IDP_CERTIFICATE:-"MIICnTCCAYUCBgGBbBNvRzANBgkqhkiG9w0BAQsFADASMRAwDgYDVQQDDAdteXJlYWxtMB4XDTIyMDYxNjEwMzIwMVoXDTMyMDYxNjEwMzM0MVowEjEQMA4GA1UEAwwHbXlyZWFsbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOHbRbyKANj9YQGz9Vup4GM3iTFaFCb4iD4uMZvy+NPU8a29AUze+SPyaaVL5aPhq8mPE6U56tOEX2usS0RUjZvjHvgQdTZlwZGKd9/XWB7w7HviZsJqCwmw7BmUs6HWbMRDmgKMO3RVcjQVetbf/eUyOYTyerA146VID/VRMrPpeQUu1HpiQWo8AtFMsGehmX9ds08anqH5lK0awDL8lLSSkHsUDy+AEC7FZT523dliM9BIxputR2Ij/PolI0Da43G93lZaFATd3pEPa1v8PKZ/RF0Y+18E33FNIulfynJmyc+WrX+dEM3rViCngGybM0t8S+yHiSV6A9ZUF8v5RN0CAwEAATANBgkqhkiG9w0BAQsFAAOCAQEAULSPnD6zru0pISTfdrYqPJHlcJhrU/2bs40jJjv47LUt/EIKpdIlCbwBiWxqJLclarxTehzz5L/PHCpdaMqRwX7vbfLqSCE+CLmDoNazjWE3iiDx+Wz4JpbXTrBTqgT8zraytkWhb3Dm6UYROuhOb0UNgjCgp8/NhcHIwVQl2sBrJkRQSycNyV9IZ9Jy4E2Cp0VPOUh2m4qjKFxR+cch6ONYS/+A4DhQWXiDhYipbE5BFcaTPOhUsC7wWBQZ4kkRK+D3X6DNmG+mND7KdwXWMD9gscM7eb2ClXpSvctbbOvkYBDkysmUpkVK2MLWIxKogZtNu8EYvpAa0t13klrDnQ=="}
+  sp:
+    entityId: ${SAML_SP_ENTITY_ID:-"http://localhost:8585/api/v1/saml/acs"}
+    acs: ${SAML_SP_ACS:-"http://localhost:8585/api/v1/saml/acs"}
+    logoutUrl: ${SAML_SP_SSO_LOGOUT_URL:-"http://localhost:8585/api/v1/saml/logout"}
+    spX509Certificate: ${SAML_SP_CERTIFICATE:-"MIICnTCCAYUCBgGBbBNvRzANBgkqhkiG9w0BAQsFADASMRAwDgYDVQQDDAdteXJlYWxtMB4XDTIyMDYxNjEwMzIwMVoXDTMyMDYxNjEwMzM0MVowEjEQMA4GA1UEAwwHbXlyZWFsbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOHbRbyKANj9YQGz9Vup4GM3iTFaFCb4iD4uMZvy+NPU8a29AUze+SPyaaVL5aPhq8mPE6U56tOEX2usS0RUjZvjHvgQdTZlwZGKd9/XWB7w7HviZsJqCwmw7BmUs6HWbMRDmgKMO3RVcjQVetbf/eUyOYTyerA146VID/VRMrPpeQUu1HpiQWo8AtFMsGehmX9ds08anqH5lK0awDL8lLSSkHsUDy+AEC7FZT523dliM9BIxputR2Ij/PolI0Da43G93lZaFATd3pEPa1v8PKZ/RF0Y+18E33FNIulfynJmyc+WrX+dEM3rViCngGybM0t8S+yHiSV6A9ZUF8v5RN0CAwEAATANBgkqhkiG9w0BAQsFAAOCAQEAULSPnD6zru0pISTfdrYqPJHlcJhrU/2bs40jJjv47LUt/EIKpdIlCbwBiWxqJLclarxTehzz5L/PHCpdaMqRwX7vbfLqSCE+CLmDoNazjWE3iiDx+Wz4JpbXTrBTqgT8zraytkWhb3Dm6UYROuhOb0UNgjCgp8/NhcHIwVQl2sBrJkRQSycNyV9IZ9Jy4E2Cp0VPOUh2m4qjKFxR+cch6ONYS/+A4DhQWXiDhYipbE5BFcaTPOhUsC7wWBQZ4kkRK+D3X6DNmG+mND7KdwXWMD9gscM7eb2ClXpSvctbbOvkYBDkysmUpkVK2MLWIxKogZtNu8EYvpAa0t13klrDnQ=="}
+    callback: ${SAML_SP_CALLBACK:-"http://localhost:8585"}
+    tokenValidity: ${SAML_SP_TOKEN_VALIDITY:-"7"}
+
 jwtTokenConfiguration:
   rsapublicKeyFilePath: ${RSA_PUBLIC_KEY_FILE_PATH:-""}
   rsaprivateKeyFilePath: ${RSA_PRIVATE_KEY_FILE_PATH:-""}
