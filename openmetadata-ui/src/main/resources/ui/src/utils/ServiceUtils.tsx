@@ -11,14 +11,13 @@
  *  limitations under the License.
  */
 
-import { AxiosError, AxiosResponse } from 'axios';
+import { AxiosError } from 'axios';
 import cryptoRandomString from 'crypto-random-string-with-promisify-polyfill';
 import {
   Bucket,
   DynamicFormFieldType,
   DynamicObj,
   ServiceCollection,
-  ServiceData,
   ServicesData,
   ServiceTypes,
 } from 'Models';
@@ -96,7 +95,9 @@ import {
   PipelineService,
   PipelineServiceType,
 } from '../generated/entity/services/pipelineService';
-import { DataService, ServiceResponse } from '../interface/service.interface';
+import { Paging } from '../generated/type/paging';
+import { ServiceResponse, ServicesType } from '../interface/service.interface';
+import { getEntityDeleteMessage, pluralize } from './CommonUtils';
 import { getDashboardURL } from './DashboardServiceUtils';
 import { getBrokers } from './MessagingServiceUtils';
 import { showErrorToast } from './ToastUtils';
@@ -265,13 +266,16 @@ const getAllServiceList = (
         return getServices(obj.value, limit);
       });
       Promise.allSettled(promiseArr)
-        .then((result: PromiseSettledResult<AxiosResponse>[]) => {
+        .then((result) => {
           if (result.length) {
             let serviceArr = [];
             serviceArr = result.map((service) =>
               service.status === 'fulfilled'
-                ? service.value?.data
-                : { data: [], paging: { total: 0 } }
+                ? service.value
+                : ({
+                    data: [],
+                    paging: { total: 0 } as Paging,
+                  } as ServiceResponse)
             );
             resolve(serviceArr);
           } else {
@@ -290,16 +294,17 @@ export const getAllServices = (
   limit?: number
 ): Promise<Array<ServiceResponse>> => {
   return new Promise<Array<ServiceResponse>>((resolve, reject) => {
-    getServiceDetails().then((res: AxiosResponse) => {
+    getServiceDetails().then((res) => {
       let allServiceCollectionArr: Array<ServiceCollection> = [];
-      if (res.data.data?.length) {
-        const arrServiceCat: Array<{ name: string; value: string }> =
-          res.data.data.map((service: ServiceData) => {
+      if (res.data?.length) {
+        const arrServiceCat: Array<ServiceCollection> = res.data.map(
+          (service) => {
             return {
               name: service.collection.name,
               value: service.collection.name,
             };
-          });
+          }
+        );
 
         if (onlyVisibleServices) {
           allServiceCollectionArr = arrServiceCat.filter((service) =>
@@ -316,10 +321,8 @@ export const getAllServices = (
   });
 };
 
-export const getServiceCategoryFromType = (
-  type: string
-): ServiceTypes | undefined => {
-  let serviceCategory;
+export const getServiceCategoryFromType = (type: string): ServiceTypes => {
+  let serviceCategory: ServiceTypes = 'databaseServices';
   for (const category in serviceTypes) {
     if (serviceTypes[category as ServiceTypes].includes(type)) {
       serviceCategory = category as ServiceTypes;
@@ -434,10 +437,6 @@ export const servicePageTabs = (entity: string) => [
     name: 'Connection',
     path: 'connection',
   },
-  {
-    name: 'Manage',
-    path: 'manage',
-  },
 ];
 
 export const getCurrentServiceTab = (tab: string) => {
@@ -450,11 +449,6 @@ export const getCurrentServiceTab = (tab: string) => {
 
     case 'connection':
       currentTab = 3;
-
-      break;
-
-    case 'manage':
-      currentTab = 4;
 
       break;
 
@@ -655,7 +649,7 @@ export const setServiceTableCount = (
 };
 
 export const getOptionalFields = (
-  service: DataService,
+  service: ServicesType,
   serviceName: ServiceCategory
 ): JSX.Element => {
   switch (serviceName) {
@@ -729,5 +723,46 @@ export const getOptionalFields = (
     default: {
       return <></>;
     }
+  }
+};
+
+export const getDeleteEntityMessage = (
+  serviceName: string,
+  instanceCount: number,
+  schemaCount: number,
+  tableCount: number
+) => {
+  const service = serviceName?.slice(0, -1);
+
+  switch (serviceName) {
+    case ServiceCategory.DATABASE_SERVICES:
+      return getEntityDeleteMessage(
+        service || 'Service',
+        `${pluralize(instanceCount, 'Database')}, ${pluralize(
+          schemaCount,
+          'Schema'
+        )} and ${pluralize(tableCount, 'Table')}`
+      );
+
+    case ServiceCategory.MESSAGING_SERVICES:
+      return getEntityDeleteMessage(
+        service || 'Service',
+        pluralize(instanceCount, 'Topic')
+      );
+
+    case ServiceCategory.DASHBOARD_SERVICES:
+      return getEntityDeleteMessage(
+        service || 'Service',
+        pluralize(instanceCount, 'Dashboard')
+      );
+
+    case ServiceCategory.PIPELINE_SERVICES:
+      return getEntityDeleteMessage(
+        service || 'Service',
+        pluralize(instanceCount, 'Pipeline')
+      );
+
+    default:
+      return;
   }
 };

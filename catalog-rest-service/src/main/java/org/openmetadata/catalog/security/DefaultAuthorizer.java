@@ -13,7 +13,6 @@
 
 package org.openmetadata.catalog.security;
 
-import static org.openmetadata.catalog.exception.CatalogExceptionMessage.noPermission;
 import static org.openmetadata.catalog.exception.CatalogExceptionMessage.notAdmin;
 import static org.openmetadata.catalog.security.SecurityUtil.DEFAULT_PRINCIPAL_DOMAIN;
 
@@ -23,8 +22,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import javax.ws.rs.core.SecurityContext;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -34,11 +31,16 @@ import org.openmetadata.catalog.entity.teams.User;
 import org.openmetadata.catalog.exception.EntityNotFoundException;
 import org.openmetadata.catalog.jdbi3.EntityRepository;
 import org.openmetadata.catalog.security.policyevaluator.OperationContext;
+import org.openmetadata.catalog.security.policyevaluator.PolicyCache;
+import org.openmetadata.catalog.security.policyevaluator.PolicyEvaluator;
 import org.openmetadata.catalog.security.policyevaluator.ResourceContextInterface;
-import org.openmetadata.catalog.security.policyevaluator.RoleEvaluator;
+import org.openmetadata.catalog.security.policyevaluator.RoleCache;
+import org.openmetadata.catalog.security.policyevaluator.SubjectCache;
 import org.openmetadata.catalog.security.policyevaluator.SubjectContext;
 import org.openmetadata.catalog.type.EntityReference;
 import org.openmetadata.catalog.type.MetadataOperation;
+import org.openmetadata.catalog.type.Permission.Access;
+import org.openmetadata.catalog.type.ResourcePermission;
 import org.openmetadata.catalog.util.RestUtil;
 
 @Slf4j
@@ -55,6 +57,10 @@ public class DefaultAuthorizer implements Authorizer {
     this.botUsers = new HashSet<>(config.getBotPrincipals());
     this.testUsers = new HashSet<>(config.getTestPrincipals());
     this.principalDomain = config.getPrincipalDomain();
+
+    SubjectCache.initialize();
+    PolicyCache.initialize();
+    RoleCache.initialize();
     LOG.debug("Admin users: {}", adminUsers);
     initializeUsers();
   }
@@ -91,29 +97,19 @@ public class DefaultAuthorizer implements Authorizer {
   }
 
   @Override
-  public List<MetadataOperation> listPermissions(
-      SecurityContext securityContext, ResourceContextInterface resourceContext) {
-    SubjectContext subjectContext = getSubjectContext(securityContext);
+  public List<ResourcePermission> listPermissions(SecurityContext securityContext) {
+    SubjectContext subjectContext;
+    try {
+      subjectContext = getSubjectContext(securityContext);
+    } catch (EntityNotFoundException ex) {
+      return Collections.emptyList();
+    }
 
     if (subjectContext.isAdmin() || subjectContext.isBot()) {
       // Admins and bots have permissions to do all operations.
-      return Stream.of(MetadataOperation.values()).collect(Collectors.toList());
+      return PolicyEvaluator.getResourcePermissions(Access.ALLOW);
     }
-
-    try {
-      List<EntityReference> allRoles = subjectContext.getAllRoles();
-      if (resourceContext == null) {
-        return RoleEvaluator.getInstance().getAllowedOperations(subjectContext, null);
-      }
-      EntityReference owner = resourceContext.getOwner();
-      if (owner == null || subjectContext.isOwner(owner)) {
-        // Entity does not have an owner or is owned by the user - allow all operations.
-        return Stream.of(MetadataOperation.values()).collect(Collectors.toList());
-      }
-      return RoleEvaluator.getInstance().getAllowedOperations(subjectContext, resourceContext.getEntity());
-    } catch (IOException | EntityNotFoundException ex) {
-      return Collections.emptyList();
-    }
+    return PolicyEvaluator.getAllowedOperations(subjectContext);
   }
 
   @Override
@@ -141,27 +137,16 @@ public class DefaultAuthorizer implements Authorizer {
       return;
     }
 
-    if (subjectContext.isOwner(resourceContext.getOwner())) {
-      return;
-    }
+    //    if (subjectContext.isOwner(resourceContext.getOwner())) {
+    //      return;
+    //    }
 
     // TODO view is currently allowed for everyone
     if (operationContext.getOperations().size() == 1
         && operationContext.getOperations().get(0) == MetadataOperation.VIEW_ALL) {
       return;
     }
-    List<MetadataOperation> metadataOperations = operationContext.getOperations();
-
-    // If there are no specific metadata operations that can be determined from the JSON Patch, deny the changes.
-    if (metadataOperations.isEmpty()) {
-      throw new AuthorizationException(noPermission(securityContext.getUserPrincipal()));
-    }
-    for (MetadataOperation operation : metadataOperations) {
-      if (!RoleEvaluator.getInstance().hasPermissions(subjectContext, resourceContext.getEntity(), operation)) {
-        throw new AuthorizationException(noPermission(securityContext.getUserPrincipal(), operation.value()));
-      }
-    }
-    return;
+    PolicyEvaluator.hasPermission(subjectContext, resourceContext, operationContext);
   }
 
   @Override
@@ -170,7 +155,7 @@ public class DefaultAuthorizer implements Authorizer {
     if (subjectContext.isAdmin() || (allowBots && subjectContext.isBot())) {
       return;
     }
-    throw new AuthorizationException(notAdmin(securityContext.getUserPrincipal()));
+    throw new AuthorizationException(notAdmin(securityContext.getUserPrincipal().getName()));
   }
 
   private void addOrUpdateUser(User user) {
@@ -189,6 +174,6 @@ public class DefaultAuthorizer implements Authorizer {
     if (securityContext == null || securityContext.getUserPrincipal() == null) {
       throw new AuthenticationException("No principal in security context");
     }
-    return SubjectContext.getSubjectContext(SecurityUtil.getUserName(securityContext.getUserPrincipal()));
+    return SubjectCache.getInstance().getSubjectContext(SecurityUtil.getUserName(securityContext.getUserPrincipal()));
   }
 }

@@ -27,6 +27,9 @@ from metadata.generated.schema.entity.services.connections.metadata.openMetadata
     OpenMetadataConnection,
     SecretsManagerProvider,
 )
+from metadata.generated.schema.entity.services.connections.serviceConnection import (
+    ServiceConnection,
+)
 from metadata.generated.schema.entity.services.databaseService import (
     DatabaseConnection,
     DatabaseService,
@@ -38,6 +41,7 @@ from metadata.generated.schema.security.client.googleSSOClientConfig import (
 from metadata.generated.schema.security.credentials.awsCredentials import AWSCredentials
 from metadata.utils.secrets_manager import (
     AUTH_PROVIDER_MAPPING,
+    SecretsManager,
     Singleton,
     get_secrets_manager,
 )
@@ -55,8 +59,9 @@ AUTH_PROVIDER_CONFIG = {"secretKey": "/fake/path"}
 
 
 class TestSecretsManager(TestCase):
-    service_type: str = "databaseService"
+    service_type: str = "database"
     service: DatabaseService
+    service_connection: ServiceConnection
     database_connection = MysqlConnection(**DATABASE_CONNECTION)
     auth_provider_config = GoogleSSOClientConfig(**AUTH_PROVIDER_CONFIG)
     om_connection: OpenMetadataConnection
@@ -64,6 +69,8 @@ class TestSecretsManager(TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.service = DatabaseService(**DATABASE_SERVICE)
+        cls.service.connection = DatabaseConnection(config=cls.database_connection)
+        cls.service_connection = ServiceConnection(__root__=cls.service.connection)
         cls.om_connection = OpenMetadataConnection(
             authProvider=AuthProvider.google,
             hostPort="http://localhost:8585/api",
@@ -74,17 +81,24 @@ class TestSecretsManager(TestCase):
         Singleton.clear_all()
 
     def test_local_manager_add_service_config_connection(self):
-        local_manager = get_secrets_manager(SecretsManagerProvider.local, None)
-        self.service.connection.config = self.database_connection
-        expected_service = deepcopy(self.service)
+        local_manager = get_secrets_manager(
+            self._build_open_metadata_connection(SecretsManagerProvider.local), None
+        )
+        expected_service_connection = self.service_connection
 
-        local_manager.add_service_config_connection(self.service, self.service_type)
+        actual_service_connection: ServiceConnection = (
+            local_manager.retrieve_service_connection(self.service, self.service_type)
+        )
 
-        self.assertEqual(expected_service, self.service)
-        assert id(self.database_connection) == id(self.service.connection.config)
+        self.assertEqual(actual_service_connection, expected_service_connection)
+        assert id(actual_service_connection.__root__.config) == id(
+            expected_service_connection.__root__.config
+        )
 
     def test_local_manager_add_auth_provider_security_config(self):
-        local_manager = get_secrets_manager(SecretsManagerProvider.local, None)
+        local_manager = get_secrets_manager(
+            self._build_open_metadata_connection(SecretsManagerProvider.local), None
+        )
         actual_om_connection = deepcopy(self.om_connection)
         actual_om_connection.securityConfig = self.auth_provider_config
 
@@ -98,21 +112,29 @@ class TestSecretsManager(TestCase):
         aws_manager = self._build_secret_manager(
             boto3_mock, {"SecretString": json.dumps(DATABASE_CONNECTION)}
         )
-        expected_service = deepcopy(self.service)
-        expected_service.connection.config = self.database_connection
-        self.service.connection = None
+        expected_service_connection = self.service_connection
 
-        aws_manager.add_service_config_connection(self.service, self.service_type)
+        actual_service_connection: ServiceConnection = (
+            aws_manager.retrieve_service_connection(self.service, self.service_type)
+        )
 
-        self.assertEqual(expected_service, self.service)
-        assert id(self.database_connection) != id(self.service.connection.config)
+        expected_call = {
+            "SecretId": "/openmetadata/service/database/mysql/test_service"
+        }
+        aws_manager.secretsmanager_client.get_secret_value.assert_called_once_with(
+            **expected_call
+        )
+        self.assertEqual(expected_service_connection, actual_service_connection)
+        assert id(actual_service_connection.__root__.config) != id(
+            expected_service_connection.__root__.config
+        )
 
     @patch("metadata.utils.secrets_manager.boto3")
     def test_aws_manager_fails_add_auth_provider_security_config(self, mocked_boto3):
         aws_manager = self._build_secret_manager(mocked_boto3, {})
 
         with self.assertRaises(ValueError) as value_error:
-            aws_manager.add_service_config_connection(self.service, self.service_type)
+            aws_manager.retrieve_service_connection(self.service, self.service_type)
             self.assertEqual(
                 "[SecretString] not present in the response.", value_error.exception
             )
@@ -127,6 +149,10 @@ class TestSecretsManager(TestCase):
 
         aws_manager.add_auth_provider_security_config(actual_om_connection)
 
+        expected_call = {"SecretId": "/openmetadata/auth-provider/google"}
+        aws_manager.secretsmanager_client.get_secret_value.assert_called_once_with(
+            **expected_call
+        )
         self.assertEqual(self.auth_provider_config, actual_om_connection.securityConfig)
         assert id(self.auth_provider_config) != id(actual_om_connection.securityConfig)
 
@@ -137,14 +163,18 @@ class TestSecretsManager(TestCase):
         aws_manager = self._build_secret_manager(mocked_boto3, {})
 
         with self.assertRaises(ValueError) as value_error:
-            aws_manager.add_service_config_connection(self.service, self.service_type)
+            aws_manager.retrieve_service_connection(self.service, self.service_type)
             self.assertEqual(
                 "[SecretString] not present in the response.", value_error.exception
             )
 
     def test_get_not_implemented_secret_manager(self):
         with self.assertRaises(NotImplementedError) as not_implemented_error:
-            get_secrets_manager("any")
+            om_connection: OpenMetadataConnection = (
+                self._build_open_metadata_connection(SecretsManagerProvider.local)
+            )
+            om_connection.secretsManagerProvider = "aws"
+            get_secrets_manager(om_connection)
             self.assertEqual(
                 "[any] is not implemented.", not_implemented_error.exception
             )
@@ -156,10 +186,12 @@ class TestSecretsManager(TestCase):
         for auth_provider in auth_provider_with_client:
             assert AUTH_PROVIDER_MAPPING.get(auth_provider, None) is not None
 
-    def _build_secret_manager(self, mocked_boto3: Mock, expected_json: Dict[str, Any]):
+    def _build_secret_manager(
+        self, mocked_boto3: Mock, expected_json: Dict[str, Any]
+    ) -> SecretsManager:
         self._init_boto3_mock(mocked_boto3, expected_json)
         aws_manager = get_secrets_manager(
-            SecretsManagerProvider.aws,
+            self._build_open_metadata_connection(SecretsManagerProvider.aws),
             AWSCredentials(
                 awsAccessKeyId="fake_key",
                 awsSecretAccessKey="fake_access",
@@ -167,6 +199,16 @@ class TestSecretsManager(TestCase):
             ),
         )
         return aws_manager
+
+    @staticmethod
+    def _build_open_metadata_connection(
+        secret_manager_provider: SecretsManagerProvider,
+    ) -> OpenMetadataConnection:
+        return OpenMetadataConnection(
+            secretsManagerProvider=secret_manager_provider,
+            clusterName="openmetadata",
+            hostPort="http://localhost:8585/api",
+        )
 
     @staticmethod
     def _init_boto3_mock(boto3_mock: Mock, client_return: Dict[str, Any]):

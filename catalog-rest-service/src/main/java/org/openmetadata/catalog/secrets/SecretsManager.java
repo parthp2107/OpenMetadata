@@ -5,37 +5,28 @@ import static java.util.Objects.isNull;
 import com.google.common.base.CaseFormat;
 import java.util.List;
 import lombok.Getter;
-import org.openmetadata.catalog.ServiceConnectionEntityInterface;
 import org.openmetadata.catalog.airflow.AirflowConfiguration;
 import org.openmetadata.catalog.airflow.AuthConfiguration;
+import org.openmetadata.catalog.entity.services.ServiceType;
 import org.openmetadata.catalog.exception.SecretsManagerException;
 import org.openmetadata.catalog.services.connections.metadata.OpenMetadataServerConnection;
 
 public abstract class SecretsManager {
 
-  public static final String OPENMETADATA_PREFIX = "openmetadata";
+  @Getter private final String clusterPrefix;
 
   @Getter private final OpenMetadataServerConnection.SecretsManagerProvider secretsManagerProvider;
 
-  protected SecretsManager(OpenMetadataServerConnection.SecretsManagerProvider secretsManagerProvider) {
+  protected SecretsManager(
+      OpenMetadataServerConnection.SecretsManagerProvider secretsManagerProvider, String clusterPrefix) {
     this.secretsManagerProvider = secretsManagerProvider;
+    this.clusterPrefix = clusterPrefix;
   }
 
   public abstract boolean isLocal();
 
   public abstract Object encryptOrDecryptServiceConnectionConfig(
-      Object connectionConfig, String connectionType, String connectionName, String connectionPackage, boolean encrypt);
-
-  public void encryptOrDecryptServiceConnection(
-      ServiceConnectionEntityInterface serviceConnection, String serviceType, String connectionName, boolean encrypt) {
-    serviceConnection.setConfig(
-        encryptOrDecryptServiceConnectionConfig(
-            serviceConnection.getConfig(),
-            serviceType,
-            connectionName,
-            extractConnectionPackageName(serviceConnection),
-            encrypt));
-  }
+      Object connectionConfig, String connectionType, String connectionName, ServiceType serviceType, boolean encrypt);
 
   public OpenMetadataServerConnection decryptServerConnection(AirflowConfiguration airflowConfiguration) {
     OpenMetadataServerConnection.AuthProvider authProvider =
@@ -52,16 +43,26 @@ public abstract class SecretsManager {
   protected abstract Object decryptAuthProviderConfig(
       OpenMetadataServerConnection.AuthProvider authProvider, AuthConfiguration authConfig);
 
-  protected String buildSecretId(String... suffixes) {
+  protected String getSecretSeparator() {
+    return "/";
+  }
+
+  protected boolean startsWithSeparator() {
+    return true;
+  }
+
+  protected String buildSecretId(String... secretIdValues) {
     StringBuilder format = new StringBuilder();
-    format.append(OPENMETADATA_PREFIX);
-    for (String suffix : List.of(suffixes)) {
-      if (isNull(suffix)) {
+    format.append(startsWithSeparator() ? getSecretSeparator() : "");
+    format.append(clusterPrefix);
+    for (String secretIdValue : List.of(secretIdValues)) {
+      if (isNull(secretIdValue)) {
         throw new SecretsManagerException("Cannot build a secret id with null values.");
       }
-      format.append("-%s");
+      format.append(getSecretSeparator());
+      format.append("%s");
     }
-    return String.format(format.toString(), (Object[]) suffixes).toLowerCase();
+    return String.format(format.toString(), (Object[]) secretIdValues).toLowerCase();
   }
 
   protected Class<?> createConnectionConfigClass(String connectionType, String connectionPackage)
@@ -71,8 +72,7 @@ public abstract class SecretsManager {
     return Class.forName(clazzName);
   }
 
-  private String extractConnectionPackageName(ServiceConnectionEntityInterface serviceConnection) {
-    String upperCamelClassName = serviceConnection.getClass().getSimpleName().replace("Connection", "");
-    return CaseFormat.UPPER_CAMEL.to(CaseFormat.LOWER_CAMEL, upperCamelClassName);
+  protected String extractConnectionPackageName(ServiceType serviceType) {
+    return CaseFormat.UPPER_CAMEL.to(CaseFormat.LOWER_CAMEL, serviceType.value());
   }
 }

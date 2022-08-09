@@ -11,7 +11,7 @@
  *  limitations under the License.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { TagsTabs } from './TagsTabs';
 
@@ -26,6 +26,17 @@ jest.mock('./TagsDiffView', () => ({
     .fn()
     .mockReturnValue(<div data-testid="DiffView">DiffView</div>),
 }));
+
+// jest.mock('antd', () => ({
+//   Tabs: {
+//     __esModule: true,
+//     TabPane: jest.fn().mockImplementation(({ children }) => <p>{children}</p>),
+//     default: jest.fn().mockImplementation(({ children }) => <p>{children}</p>),
+//   },
+//   Tag: jest
+//     .fn()
+//     .mockImplementation(({ children }) => <p data-testid="tag">{children}</p>),
+// }));
 
 const mockProps = {
   tags: [],
@@ -55,16 +66,10 @@ describe('Test Description Tabs Component', () => {
 
     expect(tabs).toHaveLength(tabList.length);
 
-    fireEvent.click(tabs[0]);
+    expect(await screen.findByText('Current')).toBeInTheDocument();
 
-    expect(await screen.findByTestId('tags')).toBeInTheDocument();
+    expect(await screen.findByText('Diff')).toBeInTheDocument();
 
-    fireEvent.click(tabs[1]);
-
-    expect(await screen.findByTestId('DiffView')).toBeInTheDocument();
-
-    fireEvent.click(tabs[2]);
-
-    expect(await screen.findByTestId('tagSuggestion')).toBeInTheDocument();
+    expect(await screen.findByText('New')).toBeInTheDocument();
   });
 });

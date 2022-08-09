@@ -91,8 +91,8 @@ const AddIngestion = ({
   const [ingestSampleData, setIngestSampleData] = useState(
     (data?.sourceConfig.config as ConfigClass)?.generateSampleData ?? true
   );
-  const [databaseServiceName, setDatabaseServiceName] = useState(
-    (data?.sourceConfig.config as ConfigClass)?.dbServiceName ?? ''
+  const [databaseServiceNames, setDatabaseServiceNames] = useState(
+    (data?.sourceConfig.config as ConfigClass)?.dbServiceNames ?? []
   );
   const [description, setDescription] = useState(data?.description ?? '');
   const [repeatFrequency, setRepeatFrequency] = useState(
@@ -126,9 +126,6 @@ const AddIngestion = ({
     !isUndefined(
       (data?.sourceConfig.config as ConfigClass)?.pipelineFilterPattern
     )
-  );
-  const [showFqnFilter, setShowFqnFilter] = useState(
-    !isUndefined((data?.sourceConfig.config as ConfigClass)?.fqnFilterPattern)
   );
   const configData = useMemo(
     () =>
@@ -172,6 +169,9 @@ const AddIngestion = ({
   const [profileSample, setProfileSample] = useState(
     (data?.sourceConfig.config as ConfigClass)?.profileSample
   );
+  const [threadCount, setThreadCount] = useState(
+    (data?.sourceConfig.config as ConfigClass)?.threadCount ?? 5
+  );
   const [dashboardFilterPattern, setDashboardFilterPattern] =
     useState<FilterPattern>(
       (data?.sourceConfig.config as ConfigClass)?.dashboardFilterPattern ??
@@ -203,10 +203,6 @@ const AddIngestion = ({
       (data?.sourceConfig.config as ConfigClass)?.pipelineFilterPattern ??
         INITIAL_FILTER_PATTERN
     );
-  const [fqnFilterPattern, setFqnFilterPattern] = useState<FilterPattern>(
-    (data?.sourceConfig.config as ConfigClass)?.fqnFilterPattern ??
-      INITIAL_FILTER_PATTERN
-  );
 
   const [queryLogDuration, setQueryLogDuration] = useState<number>(
     (data?.sourceConfig.config as ConfigClass)?.queryLogDuration ?? 1
@@ -259,10 +255,6 @@ const AddIngestion = ({
         setChartFilterPattern({ ...chartFilterPattern, includes: value });
 
         break;
-      case FilterPatternEnum.FQN:
-        setFqnFilterPattern({ ...fqnFilterPattern, includes: value });
-
-        break;
       case FilterPatternEnum.PIPELINE:
         setPipelineFilterPattern({ ...pipelineFilterPattern, includes: value });
 
@@ -298,10 +290,6 @@ const AddIngestion = ({
         setChartFilterPattern({ ...chartFilterPattern, excludes: value });
 
         break;
-      case FilterPatternEnum.FQN:
-        setFqnFilterPattern({ ...fqnFilterPattern, excludes: value });
-
-        break;
       case FilterPatternEnum.PIPELINE:
         setPipelineFilterPattern({ ...pipelineFilterPattern, excludes: value });
 
@@ -333,10 +321,6 @@ const AddIngestion = ({
         break;
       case FilterPatternEnum.CHART:
         setShowChartFilter(value);
-
-        break;
-      case FilterPatternEnum.FQN:
-        setShowFqnFilter(value);
 
         break;
       case FilterPatternEnum.PIPELINE:
@@ -434,7 +418,7 @@ const AddIngestion = ({
             dashboardFilterPattern,
             showDashboardFilter
           ),
-          dbServiceName: databaseServiceName,
+          dbServiceNames: databaseServiceNames,
           type: ConfigType.DashboardMetadata,
         };
       }
@@ -466,13 +450,23 @@ const AddIngestion = ({
       }
       case PipelineType.Profiler: {
         return {
-          fqnFilterPattern: getFilterPatternData(
-            fqnFilterPattern,
-            showFqnFilter
+          databaseFilterPattern: getFilterPatternData(
+            databaseFilterPattern,
+            showDatabaseFilter
           ),
+          schemaFilterPattern: getFilterPatternData(
+            schemaFilterPattern,
+            showSchemaFilter
+          ),
+          tableFilterPattern: getFilterPatternData(
+            tableFilterPattern,
+            showTableFilter
+          ),
+
           type: profilerIngestionType,
           generateSampleData: ingestSampleData,
           profileSample: profileSample,
+          threadCount: threadCount,
         };
       }
       case PipelineType.Metadata:
@@ -617,13 +611,12 @@ const AddIngestion = ({
             chartFilterPattern={chartFilterPattern}
             dashboardFilterPattern={dashboardFilterPattern}
             databaseFilterPattern={databaseFilterPattern}
-            databaseServiceName={databaseServiceName}
+            databaseServiceNames={databaseServiceNames}
             description={description}
             enableDebugLog={enableDebugLog}
-            fqnFilterPattern={fqnFilterPattern}
             getExcludeValue={getExcludeValue}
             getIncludeValue={getIncludeValue}
-            handleDatasetServiceName={(val) => setDatabaseServiceName(val)}
+            handleDatasetServiceName={(val) => setDatabaseServiceNames(val)}
             handleDescription={(val) => setDescription(val)}
             handleEnableDebugLog={() => setEnableDebugLog((pre) => !pre)}
             handleIncludeLineage={() => setIncludeLineage((pre) => !pre)}
@@ -634,9 +627,10 @@ const AddIngestion = ({
             handleMarkDeletedTables={() => setMarkDeletedTables((pre) => !pre)}
             handleProfileSample={(val) => setProfileSample(val)}
             handleQueryLogDuration={(val) => setQueryLogDuration(val)}
-            handleResultLimit={(val) => setResultLimit(val)}
+            handleResultLimit={setResultLimit}
             handleShowFilter={handleShowFilter}
             handleStageFileLocation={(val) => setStageFileLocation(val)}
+            handleThreadCount={setThreadCount}
             includeLineage={includeLineage}
             includeTags={includeTag}
             includeView={includeView}
@@ -653,13 +647,13 @@ const AddIngestion = ({
             showChartFilter={showChartFilter}
             showDashboardFilter={showDashboardFilter}
             showDatabaseFilter={showDatabaseFilter}
-            showFqnFilter={showFqnFilter}
             showPipelineFilter={showPipelineFilter}
             showSchemaFilter={showSchemaFilter}
             showTableFilter={showTableFilter}
             showTopicFilter={showTopicFilter}
             stageFileLocation={stageFileLocation}
             tableFilterPattern={tableFilterPattern}
+            threadCount={threadCount}
             topicFilterPattern={topicFilterPattern}
             onCancel={handleCancelClick}
             onNext={handleNext}

@@ -4,8 +4,10 @@ import static org.openmetadata.catalog.services.connections.metadata.OpenMetadat
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.common.annotations.VisibleForTesting;
+import java.util.Locale;
 import org.openmetadata.catalog.airflow.AirflowConfiguration;
 import org.openmetadata.catalog.airflow.AuthConfiguration;
+import org.openmetadata.catalog.entity.services.ServiceType;
 import org.openmetadata.catalog.exception.InvalidServiceConnectionException;
 import org.openmetadata.catalog.exception.SecretsManagerException;
 import org.openmetadata.catalog.services.connections.metadata.OpenMetadataServerConnection;
@@ -26,8 +28,10 @@ public class AWSSecretsManager extends SecretsManager {
   private SecretsManagerClient secretsClient;
 
   private AWSSecretsManager(
-      OpenMetadataServerConnection.SecretsManagerProvider secretsManagerProvider, SecretsManagerConfiguration config) {
-    super(secretsManagerProvider);
+      OpenMetadataServerConnection.SecretsManagerProvider secretsManagerProvider,
+      SecretsManagerConfiguration config,
+      String clusterPrefix) {
+    super(secretsManagerProvider, clusterPrefix);
     if (config == null) {
       throw new SecretsManagerException("Secrets manager configuration is empty.");
     }
@@ -49,12 +53,9 @@ public class AWSSecretsManager extends SecretsManager {
 
   @Override
   public Object encryptOrDecryptServiceConnectionConfig(
-      Object connectionConfig,
-      String connectionType,
-      String connectionName,
-      String connectionPackage,
-      boolean encrypt) {
-    String secretName = buildSecretId(connectionPackage, connectionType, connectionName);
+      Object connectionConfig, String connectionType, String connectionName, ServiceType serviceType, boolean encrypt) {
+    String secretName =
+        buildSecretId("service", serviceType.value().toLowerCase(Locale.ROOT), connectionType, connectionName);
     try {
       if (encrypt) {
         String connectionConfigJson = JsonUtils.pojoToJson(connectionConfig);
@@ -63,7 +64,7 @@ public class AWSSecretsManager extends SecretsManager {
         }
         return null;
       } else {
-        Class<?> clazz = createConnectionConfigClass(connectionType, connectionPackage);
+        Class<?> clazz = createConnectionConfigClass(connectionType, extractConnectionPackageName(serviceType));
         return JsonUtils.readValue(getSecret(secretName), clazz);
       }
     } catch (ClassNotFoundException ex) {
@@ -162,8 +163,8 @@ public class AWSSecretsManager extends SecretsManager {
     return this.secretsClient.getSecretValue(getSecretValueRequest).secretString();
   }
 
-  public static AWSSecretsManager getInstance(SecretsManagerConfiguration config) {
-    if (INSTANCE == null) INSTANCE = new AWSSecretsManager(AWS, config);
+  public static AWSSecretsManager getInstance(SecretsManagerConfiguration config, String clusterPrefix) {
+    if (INSTANCE == null) INSTANCE = new AWSSecretsManager(AWS, config, clusterPrefix);
     return INSTANCE;
   }
 

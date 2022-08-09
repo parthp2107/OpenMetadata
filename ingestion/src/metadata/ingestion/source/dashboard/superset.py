@@ -16,8 +16,6 @@ import json
 import traceback
 from typing import Iterable, List, Optional
 
-import dateutil.parser as dateparser
-
 from metadata.generated.schema.api.data.createChart import CreateChartRequest
 from metadata.generated.schema.api.data.createDashboard import CreateDashboardRequest
 from metadata.generated.schema.api.lineage.addLineage import AddLineageRequest
@@ -87,22 +85,6 @@ def get_filter_name(filter_obj):
 
 
 class SupersetSource(DashboardServiceSource):
-    """
-    Superset source class
-
-    Args:
-        config:
-        metadata_config:
-
-    Attributes:
-        config:
-        metadata_config:
-        status:
-        platform:
-        service_type:
-        service:
-
-    """
 
     config: WorkflowSource
     metadata_config: OpenMetadataConnection
@@ -203,7 +185,7 @@ class SupersetSource(DashboardServiceSource):
         return []
 
     def yield_dashboard_lineage_details(
-        self, dashboard_details: dict
+        self, dashboard_details: dict, db_service_name: str
     ) -> Optional[Iterable[AddLineageRequest]]:
         """
         Get lineage between dashboard and data sources
@@ -211,7 +193,9 @@ class SupersetSource(DashboardServiceSource):
         for chart_id in self._get_charts_of_dashboard(dashboard_details):
             chart_json = self.all_charts.get(chart_id)
             datasource_fqn = (
-                self._get_datasource_fqn(chart_json.get("datasource_id"))
+                self._get_datasource_fqn(
+                    chart_json.get("datasource_id"), db_service_name
+                )
                 if chart_json.get("datasource_id")
                 else None
             )
@@ -276,8 +260,10 @@ class SupersetSource(DashboardServiceSource):
             )
             yield chart
 
-    def _get_datasource_fqn(self, datasource_id: str) -> Optional[str]:
-        if not self.source_config.dbServiceName:
+    def _get_datasource_fqn(
+        self, datasource_id: str, db_service_name: str
+    ) -> Optional[str]:
+        if not db_service_name:
             return
         try:
             datasource_json = self.client.fetch_datasource(datasource_id)
@@ -290,7 +276,7 @@ class SupersetSource(DashboardServiceSource):
                 table_name=datasource_json["result"]["table_name"],
                 schema_name=datasource_json["result"]["schema"],
                 database_name=database_json["result"]["parameters"]["database"],
-                service_name=self.source_config.dbServiceName,
+                service_name=db_service_name,
             )
             return dataset_fqn
         except KeyError:

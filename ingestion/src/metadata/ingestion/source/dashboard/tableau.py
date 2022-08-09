@@ -59,17 +59,6 @@ TABLEAU_TAG_CATEGORY = "TableauTags"
 
 
 class TableauSource(DashboardServiceSource):
-    """Tableau source entity class
-
-    Args:
-        config:
-        metadata_config:
-
-    Attributes:
-        config:
-        metadata_config:
-        all_dashboard_details:
-    """
 
     config: WorkflowSource
     metadata_config: OpenMetadataConnection
@@ -224,7 +213,7 @@ class TableauSource(DashboardServiceSource):
         )
 
     def yield_dashboard_lineage_details(
-        self, dashboard_details: dict
+        self, dashboard_details: dict, db_service_name: str
     ) -> Optional[Iterable[AddLineageRequest]]:
         """
         Get lineage between dashboard and data sources
@@ -257,7 +246,7 @@ class TableauSource(DashboardServiceSource):
                 from_fqn = fqn.build(
                     self.metadata,
                     entity_type=Table,
-                    service_name=self.source_config.dbServiceName,
+                    service_name=db_service_name,
                     schema_name=schema_name,
                     table_name=table_name,
                     database_name=None,

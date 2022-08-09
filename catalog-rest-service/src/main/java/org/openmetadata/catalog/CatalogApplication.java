@@ -101,7 +101,8 @@ public class CatalogApplication extends Application<CatalogApplicationConfig> {
     jdbi.setTimingCollector(new MicrometerJdbiTimingCollector());
 
     final SecretsManager secretsManager =
-        SecretsManagerFactory.createSecretsManager(catalogConfig.getSecretsManagerConfiguration());
+        SecretsManagerFactory.createSecretsManager(
+            catalogConfig.getSecretsManagerConfiguration(), catalogConfig.getClusterName());
 
     secretsManager.encryptAirflowConnection(catalogConfig.getAirflowConfiguration());
 
@@ -151,13 +152,14 @@ public class CatalogApplication extends Application<CatalogApplicationConfig> {
     environment.jersey().register(new EarlyEofExceptionMapper());
     environment.jersey().register(JsonMappingExceptionMapper.class);
     environment.healthChecks().register("OpenMetadataServerHealthCheck", new OpenMetadataServerHealthCheck());
+    // start event hub before registering publishers
+    EventPubSub.start();
+
     registerResources(catalogConfig, environment, jdbi, secretsManager);
 
     // Register Event Handler
     registerEventFilter(catalogConfig, environment, jdbi);
     environment.lifecycle().manage(new ManagedShutdown());
-    // start event hub before registering publishers
-    EventPubSub.start();
     // Register Event publishers
     registerEventPublisher(catalogConfig);
 
@@ -270,17 +272,6 @@ public class CatalogApplication extends Application<CatalogApplicationConfig> {
       ElasticSearchEventPublisher elasticSearchEventPublisher =
           new ElasticSearchEventPublisher(catalogApplicationConfig.getElasticSearchConfiguration());
       EventPubSub.addEventHandler(elasticSearchEventPublisher);
-    }
-    // register slack Event publishers
-    if (catalogApplicationConfig.getSlackEventPublishers() != null) {
-      for (SlackPublisherConfiguration slackPublisherConfiguration :
-          catalogApplicationConfig.getSlackEventPublishers()) {
-        if (slackPublisherConfiguration.getWebhookUrl() != null
-            && !slackPublisherConfiguration.getWebhookUrl().isEmpty()) {
-          SlackWebhookEventPublisher slackPublisher = new SlackWebhookEventPublisher(slackPublisherConfiguration);
-          EventPubSub.addEventHandler(slackPublisher);
-        }
-      }
     }
   }
 

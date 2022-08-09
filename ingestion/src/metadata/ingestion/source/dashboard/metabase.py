@@ -41,14 +41,13 @@ from metadata.generated.schema.metadataIngestion.workflow import (
 from metadata.generated.schema.type.entityLineage import EntitiesEdge
 from metadata.generated.schema.type.entityReference import EntityReference
 from metadata.ingestion.api.source import InvalidSourceException
+from metadata.ingestion.lineage.sql_lineage import search_table_entities
 from metadata.ingestion.source.dashboard.dashboard_service import DashboardServiceSource
 from metadata.ingestion.source.database.common_db_source import SQLSourceStatus
 from metadata.utils import fqn
-from metadata.utils.connections import get_connection
 from metadata.utils.filters import filter_by_chart
 from metadata.utils.helpers import get_standard_chart_type, replace_special_with
 from metadata.utils.logger import ingestion_logger
-from metadata.utils.sql_lineage import search_table_entities
 
 HEADERS = {"Content-Type": "application/json", "Accept": "*/*"}
 
@@ -56,20 +55,6 @@ logger = ingestion_logger()
 
 
 class MetabaseSource(DashboardServiceSource):
-    """Metabase entity class
-
-    Args:
-        config:
-        metadata_config:
-    Attributes:
-        config:
-        metadata_config:
-        status:
-        metabase_session:
-        dashboard_service:
-        charts:
-        metric_charts:
-    """
 
     config: WorkflowSource
     metadata_config: OpenMetadataConnection
@@ -81,19 +66,10 @@ class MetabaseSource(DashboardServiceSource):
         metadata_config: OpenMetadataConnection,
     ):
         super().__init__(config, metadata_config)
-        self.connection = get_connection(self.service_connection)
         self.metabase_session = self.connection.client["metabase_session"]
 
     @classmethod
     def create(cls, config_dict, metadata_config: OpenMetadataConnection):
-        """Instantiate object
-
-        Args:
-            config_dict:
-            metadata_config:
-        Returns:
-            MetabaseSource
-        """
         config = WorkflowSource.parse_obj(config_dict)
         connection: MetabaseConnection = config.serviceConnection.__root__.config
         if not isinstance(connection, MetabaseConnection):
@@ -197,14 +173,14 @@ class MetabaseSource(DashboardServiceSource):
                 continue
 
     def yield_dashboard_lineage_details(
-        self, dashboard_details: dict
+        self, dashboard_details: dict, db_service_name
     ) -> Optional[Iterable[AddLineageRequest]]:
         """Get lineage method
 
         Args:
             dashboard_details
         """
-        if not self.source_config.dbServiceName:
+        if not db_service_name:
             return
         chart_list, dashboard_name = (
             dashboard_details["ordered_cards"],
@@ -240,7 +216,7 @@ class MetabaseSource(DashboardServiceSource):
                         from_entities = search_table_entities(
                             metadata=self.metadata,
                             database=database["details"]["dbname"],
-                            service_name=self.source_config.dbServiceName,
+                            service_name=db_service_name,
                             database_schema=database_schema_name,
                             table=table,
                         )
@@ -280,7 +256,7 @@ class MetabaseSource(DashboardServiceSource):
                         from_fqn = fqn.build(
                             self.metadata,
                             entity_type=Table,
-                            service_name=self.source_config.dbServiceName,
+                            service_name=db_service_name,
                             database_name=table["db"]["details"]["dbname"],
                             schema_name=table.get("schema"),
                             table_name=table.get("display_name"),

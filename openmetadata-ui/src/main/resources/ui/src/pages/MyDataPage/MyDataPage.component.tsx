@@ -11,11 +11,11 @@
  *  limitations under the License.
  */
 
-import { AxiosError, AxiosResponse } from 'axios';
+import { AxiosError } from 'axios';
 import { Operation } from 'fast-json-patch';
 import { isEmpty, isNil, isUndefined } from 'lodash';
 import { observer } from 'mobx-react';
-import { FormattedTableData } from 'Models';
+import { EntityReference } from 'Models';
 import React, {
   Fragment,
   useCallback,
@@ -27,13 +27,13 @@ import { useLocation } from 'react-router-dom';
 import AppState from '../../AppState';
 import { getAllDashboards } from '../../axiosAPIs/dashboardAPI';
 import { getFeedsWithFilter, postFeedById } from '../../axiosAPIs/feedsAPI';
-import { fetchSandboxConfig, searchData } from '../../axiosAPIs/miscAPI';
+import { fetchSandboxConfig } from '../../axiosAPIs/miscAPI';
 import { getAllMlModal } from '../../axiosAPIs/mlModelAPI';
 import { getAllPipelines } from '../../axiosAPIs/pipelineAPI';
 import { getAllTables } from '../../axiosAPIs/tableAPI';
 import { getTeams } from '../../axiosAPIs/teamsAPI';
 import { getAllTopics } from '../../axiosAPIs/topicsAPI';
-import { getUsers } from '../../axiosAPIs/userAPI';
+import { getUserById, getUsers } from '../../axiosAPIs/userAPI';
 import PageContainerV1 from '../../components/containers/PageContainerV1';
 import GithubStarButton from '../../components/GithubStarButton/GithubStarButton';
 import Loader from '../../components/Loader/Loader';
@@ -44,19 +44,17 @@ import {
   onErrorText,
   onUpdatedConversastionError,
 } from '../../constants/feed.constants';
-import { myDataSearchIndex } from '../../constants/Mydata.constants';
-import { FeedFilter, Ownership } from '../../enums/mydata.enum';
-import { Thread, ThreadType } from '../../generated/entity/feed/thread';
+import { AssetsType } from '../../enums/entity.enum';
+import { FeedFilter } from '../../enums/mydata.enum';
+import { Post, Thread, ThreadType } from '../../generated/entity/feed/thread';
 import { Paging } from '../../generated/type/paging';
 import { useAuth } from '../../hooks/authHooks';
 import jsonData from '../../jsons/en';
-import { formatDataResponse } from '../../utils/APIUtils';
 import {
   deletePost,
   getUpdatedThread,
   updateThreadData,
 } from '../../utils/FeedUtils';
-import { getMyDataFilters } from '../../utils/MyDataUtils';
 import { getAllServices } from '../../utils/ServiceUtils';
 import { showErrorToast } from '../../utils/ToastUtils';
 
@@ -73,8 +71,8 @@ const MyDataPage = () => {
   const [countUsers, setCountUsers] = useState<number>();
   const [countTeams, setCountTeams] = useState<number>();
 
-  const [ownedData, setOwnedData] = useState<Array<FormattedTableData>>();
-  const [followedData, setFollowedData] = useState<Array<FormattedTableData>>();
+  const [ownedData, setOwnedData] = useState<Array<EntityReference>>();
+  const [followedData, setFollowedData] = useState<Array<EntityReference>>();
   const [ownedDataCount, setOwnedDataCount] = useState(0);
   const [followedDataCount, setFollowedDataCount] = useState(0);
   const [pendingTaskCount, setPendingTaskCount] = useState(0);
@@ -116,8 +114,8 @@ const MyDataPage = () => {
     // limit=0 will fetch empty data list with total count
     getAllTables('', 0)
       .then((res) => {
-        if (res.data) {
-          setTableCount(res.data.paging.total);
+        if (res.paging) {
+          setTableCount(res.paging.total);
         } else {
           throw jsonData['api-error-messages']['unexpected-server-response'];
         }
@@ -133,8 +131,8 @@ const MyDataPage = () => {
     // limit=0 will fetch empty data list with total count
     getAllTopics('', '', 0)
       .then((res) => {
-        if (res.data) {
-          setTopicCount(res.data.paging.total);
+        if (res.paging) {
+          setTopicCount(res.paging.total);
         } else {
           throw jsonData['api-error-messages']['unexpected-server-response'];
         }
@@ -150,8 +148,8 @@ const MyDataPage = () => {
     // limit=0 will fetch empty data list with total count
     getAllPipelines('', '', 0)
       .then((res) => {
-        if (res.data) {
-          setPipelineCount(res.data.paging.total);
+        if (res.paging) {
+          setPipelineCount(res.paging.total);
         } else {
           throw jsonData['api-error-messages']['unexpected-server-response'];
         }
@@ -167,8 +165,8 @@ const MyDataPage = () => {
     // limit=0 will fetch empty data list with total count
     getAllDashboards('', '', 0)
       .then((res) => {
-        if (res.data) {
-          setDashboardCount(res.data.paging.total);
+        if (res.paging) {
+          setDashboardCount(res.paging.total);
         } else {
           throw jsonData['api-error-messages']['unexpected-server-response'];
         }
@@ -184,8 +182,8 @@ const MyDataPage = () => {
     // limit=0 will fetch empty data list with total count
     getAllMlModal('', '', 0)
       .then((res) => {
-        if (res.data) {
-          setCountMlModal(res.data.paging.total);
+        if (res.paging) {
+          setCountMlModal(res.paging.total);
         } else {
           throw jsonData['api-error-messages']['unexpected-server-response'];
         }
@@ -202,8 +200,8 @@ const MyDataPage = () => {
   const fetchTeamsAndUsersCount = () => {
     getUsers('', 0, undefined, undefined, false)
       .then((res) => {
-        if (res.data) {
-          setUserCount(res.data.paging.total);
+        if (res.paging) {
+          setUserCount(res.paging.total);
         } else {
           throw jsonData['api-error-messages']['unexpected-server-response'];
         }
@@ -218,8 +216,8 @@ const MyDataPage = () => {
 
     getTeams('', 0)
       .then((res) => {
-        if (res.data) {
-          setTeamCount(res.data.paging.total);
+        if (res.paging) {
+          setTeamCount(res.paging.total);
         } else {
           throw jsonData['api-error-messages']['unexpected-server-response'];
         }
@@ -263,52 +261,35 @@ const MyDataPage = () => {
     }
   };
 
-  const fetchMyData = () => {
-    const ownedEntity = searchData(
-      '',
-      1,
-      8,
-      getMyDataFilters(
-        Ownership.OWNER,
-        AppState.userDetails,
-        AppState.nonSecureUserDetails
-      ),
-      '',
-      '',
-      myDataSearchIndex
-    );
+  const fetchMyData = async () => {
+    if (!currentUser || !currentUser.id) {
+      return;
+    }
+    try {
+      const userData = await getUserById(currentUser?.id, 'follows, owns');
 
-    const followedEntity = searchData(
-      '',
-      1,
-      8,
-      getMyDataFilters(
-        Ownership.FOLLOWERS,
-        AppState.userDetails,
-        AppState.nonSecureUserDetails
-      ),
-      '',
-      '',
-      myDataSearchIndex
-    );
+      if (userData) {
+        const includeData = Object.values(AssetsType);
+        const owns: EntityReference[] = userData.owns ?? [];
+        const follows: EntityReference[] = userData.follows ?? [];
 
-    Promise.allSettled([ownedEntity, followedEntity])
-      .then(([resOwnedEntity, resFollowedEntity]) => {
-        if (resOwnedEntity.status === 'fulfilled') {
-          setOwnedData(formatDataResponse(resOwnedEntity.value.data.hits.hits));
-          setOwnedDataCount(resOwnedEntity.value.data.hits.total.value);
-        }
-        if (resFollowedEntity.status === 'fulfilled') {
-          setFollowedDataCount(resFollowedEntity.value.data.hits.total.value);
-          setFollowedData(
-            formatDataResponse(resFollowedEntity.value.data.hits.hits)
-          );
-        }
-      })
-      .catch(() => {
-        setOwnedData([]);
-        setFollowedData([]);
-      });
+        setFollowedDataCount(follows.length);
+        setOwnedDataCount(owns.length);
+
+        const includedOwnsData = owns.filter((data) =>
+          includeData.includes(data.type as AssetsType)
+        );
+        const includedFollowsData = follows.filter((data) =>
+          includeData.includes(data.type as AssetsType)
+        );
+
+        setFollowedData(includedFollowsData.slice(0, 8));
+        setOwnedData(includedOwnsData.slice(0, 8));
+      }
+    } catch (err) {
+      setOwnedData([]);
+      setFollowedData([]);
+    }
   };
 
   const getFeedData = (
@@ -323,8 +304,8 @@ const MyDataPage = () => {
       after,
       type
     )
-      .then((res: AxiosResponse) => {
-        const { data, paging: pagingObj } = res.data;
+      .then((res) => {
+        const { data, paging: pagingObj } = res;
         setPaging(pagingObj);
         setEntityThread((prevData) => [...prevData, ...data]);
       })
@@ -352,14 +333,14 @@ const MyDataPage = () => {
       message: value,
       from: currentUser?.name,
     };
-    postFeedById(id, data)
-      .then((res: AxiosResponse) => {
-        if (res.data) {
-          const { id, posts } = res.data;
+    postFeedById(id, data as Post)
+      .then((res) => {
+        if (res) {
+          const { id, posts } = res;
           setEntityThread((pre) => {
             return pre.map((thread) => {
               if (thread.id === id) {
-                return { ...res.data, posts: posts.slice(-3) };
+                return { ...res, posts: posts?.slice(-3) };
               } else {
                 return thread;
               }
@@ -414,8 +395,8 @@ const MyDataPage = () => {
   const fetchSandboxMode = () => {
     fetchSandboxConfig()
       .then((res) => {
-        if (res.data) {
-          setIsSandbox(Boolean(res.data.sandboxModeEnabled));
+        if (!isUndefined(res.sandboxModeEnabled)) {
+          setIsSandbox(Boolean(res.sandboxModeEnabled));
         } else {
           throw '';
         }
@@ -440,8 +421,8 @@ const MyDataPage = () => {
       FeedFilter.ASSIGNED_TO,
       undefined,
       ThreadType.Task
-    ).then((res: AxiosResponse) => {
-      res.data && setPendingTaskCount(res.data.paging.total);
+    ).then((res) => {
+      res.data && setPendingTaskCount(res.paging.total);
     });
   }, [currentUser]);
 

@@ -27,15 +27,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.openmetadata.catalog.exception.CatalogExceptionMessage.entityNotFound;
-import static org.openmetadata.catalog.exception.CatalogExceptionMessage.noPermission;
 import static org.openmetadata.catalog.exception.CatalogExceptionMessage.notAdmin;
+import static org.openmetadata.catalog.exception.CatalogExceptionMessage.permissionNotAllowed;
 import static org.openmetadata.catalog.security.SecurityUtil.authHeaders;
 import static org.openmetadata.catalog.util.TestUtils.ADMIN_AUTH_HEADERS;
 import static org.openmetadata.catalog.util.TestUtils.TEST_AUTH_HEADERS;
 import static org.openmetadata.catalog.util.TestUtils.TEST_USER_NAME;
 import static org.openmetadata.catalog.util.TestUtils.UpdateType.MINOR_UPDATE;
 import static org.openmetadata.catalog.util.TestUtils.assertDeleted;
-import static org.openmetadata.catalog.util.TestUtils.assertEntityReferences;
 import static org.openmetadata.catalog.util.TestUtils.assertListNotNull;
 import static org.openmetadata.catalog.util.TestUtils.assertListNull;
 import static org.openmetadata.catalog.util.TestUtils.assertResponse;
@@ -44,13 +43,11 @@ import static org.openmetadata.catalog.util.TestUtils.validateAlphabeticalOrderi
 import static org.openmetadata.common.utils.CommonUtil.listOrEmpty;
 import static org.openmetadata.common.utils.CommonUtil.nullOrEmpty;
 
-import com.auth0.jwk.JwkException;
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.exceptions.JWTDecodeException;
 import com.auth0.jwt.interfaces.DecodedJWT;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -90,6 +87,7 @@ import org.openmetadata.catalog.type.ChangeDescription;
 import org.openmetadata.catalog.type.EntityReference;
 import org.openmetadata.catalog.type.FieldChange;
 import org.openmetadata.catalog.type.ImageList;
+import org.openmetadata.catalog.type.MetadataOperation;
 import org.openmetadata.catalog.type.Profile;
 import org.openmetadata.catalog.util.EntityUtil;
 import org.openmetadata.catalog.util.JsonUtils;
@@ -234,10 +232,13 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
     assertRoles(user2, Arrays.asList(nonDefaultRoleRef), Arrays.asList(newDefaultRoleRef, role1Ref, role2Ref));
 
     // Given user2 has a non default role assigned, when user2 leaves team2, then user2 should get assigned the global
-    // default role and retain its non-default role.
+    // default role and retain its non-default role. Also note that user2 is assigned to organization.
     originalUser2 = JsonUtils.pojoToJson(user2);
     ChangeDescription change = getChangeDescription(user2.getVersion());
     change.getFieldsDeleted().add(new FieldChange().withName("teams").withOldValue(List.of(team2Ref)));
+    change
+        .getFieldsAdded()
+        .add(new FieldChange().withName("teams").withNewValue(List.of(ORG_TEAM.getEntityReference())));
     user2.setTeams(null);
     user2 = patchEntityAndCheck(user2, originalUser2, ADMIN_AUTH_HEADERS, MINOR_UPDATE, change);
     assertRoles(user2, Arrays.asList(nonDefaultRoleRef), Arrays.asList(newDefaultRoleRef));
@@ -453,6 +454,46 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
   }
 
   @Test
+  void get_listUsersWithBotFilter_200_ok(TestInfo test) throws IOException {
+    ResultList<User> users = listEntities(null, 100_000, null, null, ADMIN_AUTH_HEADERS);
+    int initialUserCount = users.getPaging().getTotal();
+    Map<String, String> botQueryParams = new HashMap<>();
+    botQueryParams.put("isBot", "true");
+    ResultList<User> bots = listEntities(botQueryParams, 100_000, null, null, ADMIN_AUTH_HEADERS);
+    int initialBotCount = bots.getPaging().getTotal();
+
+    // Create 3 bot users
+    CreateUser create = createRequest(test, 0).withIsBot(true);
+    User bot0 = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+    create = createRequest(test, 1).withIsBot(true);
+    User bot1 = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+    create = createRequest(test, 2).withIsBot(true);
+    User bot2 = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+
+    Predicate<User> isBot0 = u -> u.getId().equals(bot0.getId());
+    Predicate<User> isBot1 = u -> u.getId().equals(bot1.getId());
+    Predicate<User> isBot2 = u -> u.getId().equals(bot2.getId());
+
+    users = listEntities(null, 100_000, null, null, ADMIN_AUTH_HEADERS);
+    assertEquals(initialUserCount + 3, users.getPaging().getTotal());
+
+    // list bot users
+    bots = listEntities(botQueryParams, 100_000, null, null, ADMIN_AUTH_HEADERS);
+    assertEquals(initialBotCount + 3, bots.getData().size());
+    assertEquals(initialBotCount + 3, bots.getPaging().getTotal());
+    assertTrue(bots.getData().stream().anyMatch(isBot0));
+    assertTrue(bots.getData().stream().anyMatch(isBot1));
+    assertTrue(bots.getData().stream().anyMatch(isBot2));
+
+    Map<String, String> queryParams = new HashMap<>();
+    queryParams.put("isBot", "false");
+
+    // list users (not bots)
+    users = listEntities(queryParams, 100_000, null, null, ADMIN_AUTH_HEADERS);
+    assertEquals(initialUserCount - initialBotCount, users.getPaging().getTotal());
+  }
+
+  @Test
   void get_listUsersWithTeamsPagination(TestInfo test) throws IOException {
     TeamResourceTest teamResourceTest = new TeamResourceTest();
     Team team1 = teamResourceTest.createEntity(teamResourceTest.createRequest(test, 1), ADMIN_AUTH_HEADERS);
@@ -528,7 +569,10 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
             authHeaders("test23@email.com"));
     String userJson = JsonUtils.pojoToJson(user);
     user.setDisplayName("newName");
-    assertResponse(() -> patchEntity(user.getId(), userJson, user, TEST_AUTH_HEADERS), FORBIDDEN, noPermission("test"));
+    assertResponse(
+        () -> patchEntity(user.getId(), userJson, user, TEST_AUTH_HEADERS),
+        FORBIDDEN,
+        permissionNotAllowed(TEST_USER_NAME, List.of(MetadataOperation.EDIT_DISPLAY_NAME)));
   }
 
   @Test
@@ -578,7 +622,7 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
         roleResourceTest.createEntity(roleResourceTest.createRequest(test, 1), ADMIN_AUTH_HEADERS).getEntityReference();
 
     //
-    // Add previously absent attributes
+    // Add previously absent attributes. Note the default team Organization is deleted when adding new teams.
     //
     String origJson = JsonUtils.pojoToJson(user);
 
@@ -592,6 +636,9 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
         .withIsAdmin(false);
     ChangeDescription change = getChangeDescription(user.getVersion());
     change.getFieldsAdded().add(new FieldChange().withName("roles").withNewValue(Arrays.asList(role1)));
+    change
+        .getFieldsDeleted()
+        .add(new FieldChange().withName("teams").withOldValue(Arrays.asList(ORG_TEAM.getEntityReference())));
     change.getFieldsAdded().add(new FieldChange().withName("teams").withNewValue(teams));
     change.getFieldsAdded().add(new FieldChange().withName("timezone").withNewValue(timezone));
     change.getFieldsAdded().add(new FieldChange().withName("displayName").withNewValue("displayName"));
@@ -645,10 +692,13 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
         .withIsBot(null)
         .withIsAdmin(false);
 
-    // Note non-empty display field is not deleted
+    // Note non-empty display field is not deleted. When teams are deleted, Organization is added back as default team.
     change = getChangeDescription(user.getVersion());
     change.getFieldsDeleted().add(new FieldChange().withName("roles").withOldValue(Arrays.asList(role2)));
     change.getFieldsDeleted().add(new FieldChange().withName("teams").withOldValue(teams1));
+    change
+        .getFieldsAdded()
+        .add(new FieldChange().withName("teams").withNewValue(Arrays.asList(ORG_TEAM.getEntityReference())));
     change.getFieldsDeleted().add(new FieldChange().withName("timezone").withOldValue(timezone1));
     change.getFieldsDeleted().add(new FieldChange().withName("displayName").withOldValue("displayName1"));
     change.getFieldsDeleted().add(new FieldChange().withName("profile").withOldValue(profile1));
@@ -687,8 +737,7 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
   }
 
   @Test
-  void put_generateToken_bot_user_200_ok(TestInfo test)
-      throws HttpResponseException, MalformedURLException, JwkException {
+  void put_generateToken_bot_user_200_ok(TestInfo test) throws HttpResponseException {
     User user =
         createEntity(
             createRequest(test, 6)
@@ -697,7 +746,6 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
                 .withEmail("ingestion-bot-jwt@email.com")
                 .withIsBot(true),
             authHeaders("ingestion-bot-jwt@email.com"));
-    JWTAuthMechanism authMechanism = new JWTAuthMechanism().withJWTTokenExpiry(JWTTokenExpiry.Seven);
     TestUtils.put(
         getResource(String.format("users/generateToken/%s", user.getId())),
         new GenerateTokenRequest().withJWTTokenExpiry(JWTTokenExpiry.Seven),
@@ -722,7 +770,7 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
     assertEquals(StringUtils.EMPTY, jwtAuthMechanism.getJWTToken());
   }
 
-  private DecodedJWT decodedJWT(String token) throws MalformedURLException, JwkException, HttpResponseException {
+  private DecodedJWT decodedJWT(String token) {
     DecodedJWT jwt;
     try {
       jwt = JWT.decode(token);
@@ -828,7 +876,9 @@ public class UserResourceTest extends EntityResourceTest<User, CreateUser> {
     for (UUID teamId : listOrEmpty(createRequest.getTeams())) {
       expectedTeams.add(new EntityReference().withId(teamId).withType(Entity.TEAM));
     }
-    TestUtils.assertEntityReferences(expectedTeams, user.getTeams());
+    if (expectedTeams.isEmpty()) {
+      expectedTeams = new ArrayList<>(List.of(ORG_TEAM.getEntityReference())); // Organization is default team
+    }
 
     if (createRequest.getProfile() != null) {
       assertEquals(createRequest.getProfile(), user.getProfile());

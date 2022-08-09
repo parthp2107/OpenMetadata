@@ -15,19 +15,15 @@ from logging.config import DictConfigurator
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
+from requests.exceptions import HTTPError
 
 from metadata.config.common import ConfigModel
-from metadata.generated.schema.api.data.createChart import CreateChartRequest
-from metadata.generated.schema.api.data.createDashboard import CreateDashboardRequest
 from metadata.generated.schema.api.data.createDatabase import CreateDatabaseRequest
 from metadata.generated.schema.api.data.createDatabaseSchema import (
     CreateDatabaseSchemaRequest,
 )
 from metadata.generated.schema.api.data.createLocation import CreateLocationRequest
-from metadata.generated.schema.api.data.createMlModel import CreateMlModelRequest
-from metadata.generated.schema.api.data.createPipeline import CreatePipelineRequest
 from metadata.generated.schema.api.data.createTable import CreateTableRequest
-from metadata.generated.schema.api.data.createTopic import CreateTopicRequest
 from metadata.generated.schema.api.lineage.addLineage import AddLineageRequest
 from metadata.generated.schema.api.policies.createPolicy import CreatePolicyRequest
 from metadata.generated.schema.api.teams.createRole import CreateRoleRequest
@@ -36,7 +32,6 @@ from metadata.generated.schema.api.teams.createUser import CreateUserRequest
 from metadata.generated.schema.entity.data.location import Location
 from metadata.generated.schema.entity.data.pipeline import Pipeline
 from metadata.generated.schema.entity.data.table import Table
-from metadata.generated.schema.entity.data.topic import Topic
 from metadata.generated.schema.entity.services.connections.metadata.openMetadataConnection import (
     OpenMetadataConnection,
 )
@@ -46,23 +41,32 @@ from metadata.generated.schema.entity.teams.team import Team
 from metadata.generated.schema.type.entityReference import EntityReference
 from metadata.ingestion.api.common import Entity
 from metadata.ingestion.api.sink import Sink, SinkStatus
+from metadata.ingestion.lineage.sql_lineage import (
+    _create_lineage_by_table_name,
+    get_lineage_by_query,
+)
 from metadata.ingestion.models.ometa_policy import OMetaPolicy
 from metadata.ingestion.models.ometa_table_db import OMetaDatabaseAndTable
 from metadata.ingestion.models.ometa_tag_category import OMetaTagAndCategory
 from metadata.ingestion.models.pipeline_status import OMetaPipelineStatus
+from metadata.ingestion.models.profile_data import OMetaTableProfileSampleData
 from metadata.ingestion.models.table_metadata import DeleteTable
 from metadata.ingestion.models.table_tests import OMetaTableTest
+from metadata.ingestion.models.tests_data import (
+    OMetaTestCaseResultsSample,
+    OMetaTestCaseSample,
+    OMetaTestSuiteSample,
+)
 from metadata.ingestion.models.user import OMetaUserProfile
 from metadata.ingestion.ometa.client import APIError
 from metadata.ingestion.ometa.ometa_api import OpenMetadata
 from metadata.ingestion.source.dashboard.dashboard_service import DashboardUsage
-from metadata.ingestion.source.database.database_service import DataModelLink
+from metadata.ingestion.source.database.database_service import (
+    DataModelLink,
+    TableLocationLink,
+)
 from metadata.utils import fqn
 from metadata.utils.logger import ingestion_logger
-from metadata.utils.sql_lineage import (
-    _create_lineage_by_table_name,
-    get_lineage_by_query,
-)
 
 # Prevent sqllineage from modifying the logger config
 # Disable the DictConfigurator.configure method while importing LineageRunner
@@ -113,26 +117,12 @@ class MetadataRestSink(Sink[Entity]):
     def write_record(self, record: Entity) -> None:
         if isinstance(record, OMetaDatabaseAndTable):
             self.write_tables(record)
-        elif isinstance(record, Topic):
-            self.write_topics(record)
-        elif isinstance(record, CreateChartRequest):
-            self.write_charts(record)
-        elif isinstance(record, CreateDashboardRequest):
-            self.write_dashboards(record)
-        elif isinstance(record, Location):
-            self.write_locations(record)
         elif isinstance(record, OMetaPolicy):
             self.write_policies(record)
-        elif isinstance(record, Pipeline):
-            self.write_pipelines(record)
-        elif isinstance(record, CreatePipelineRequest):
-            self.write_pipelines_create(record)
         elif isinstance(record, AddLineageRequest):
             self.write_lineage(record)
         elif isinstance(record, OMetaUserProfile):
             self.write_users(record)
-        elif isinstance(record, CreateMlModelRequest):
-            self.write_ml_model(record)
         elif isinstance(record, OMetaTagAndCategory):
             self.write_tag_category(record)
         elif isinstance(record, DeleteTable):
@@ -143,8 +133,18 @@ class MetadataRestSink(Sink[Entity]):
             self.write_pipeline_status(record)
         elif isinstance(record, DataModelLink):
             self.write_datamodel(record)
+        elif isinstance(record, TableLocationLink):
+            self.write_table_location_link(record)
         elif isinstance(record, DashboardUsage):
             self.write_dashboard_usage(record)
+        elif isinstance(record, OMetaTableProfileSampleData):
+            self.write_profile_sample_data(record)
+        elif isinstance(record, OMetaTestSuiteSample):
+            self.write_test_suite_sample(record)
+        elif isinstance(record, OMetaTestCaseSample):
+            self.write_test_case_sample(record)
+        elif isinstance(record, OMetaTestCaseResultsSample):
+            self.write_test_case_results_sample(record)
         else:
             logging.debug(f"Processing Create request {type(record)}")
             self.write_create_request(record)
@@ -166,7 +166,13 @@ class MetadataRestSink(Sink[Entity]):
                 self.status.failure(log)
                 logger.error(f"Failed to ingest {log}")
 
-        except APIError as err:
+        except (APIError, HTTPError) as err:
+            logger.error(f"Failed to ingest {log} due to api request failure")
+            logger.error(err)
+            self.status.failure(log)
+
+        except Exception as err:
+            logger.debug(traceback.format_exc())
             logger.error(f"Failed to ingest {log}")
             logger.error(err)
             self.status.failure(log)
@@ -183,19 +189,43 @@ class MetadataRestSink(Sink[Entity]):
             table=table, data_model=datamodel_link.datamodel
         )
 
+    def write_table_location_link(self, table_location_link: TableLocationLink) -> None:
+        """
+        Send to OM the Table and Location Link based on FQNs
+        :param table_location_link: Table FQN + Location FQN
+        """
+        try:
+            table = self.metadata.get_by_name(
+                entity=Table, fqn=table_location_link.table_fqn
+            )
+            location = self.metadata.get_by_name(
+                entity=Location, fqn=table_location_link.location_fqn
+            )
+            self.metadata.add_location(table=table, location=location)
+        except Exception as err:
+            logger.debug(traceback.format_exc())
+            logger.error(err)
+            self.status.failure(
+                f"{table_location_link.table_fqn} <-> {table_location_link.location_fqn}"
+            )
+
     def write_dashboard_usage(self, dashboard_usage: DashboardUsage) -> None:
         """
         Send a UsageRequest update to a dashboard entity
         :param dashboard_usage: dashboard entity and usage request
         """
+        try:
 
-        self.metadata.publish_dashboard_usage(
-            dashboard=dashboard_usage.dashboard,
-            dashboard_usage_request=dashboard_usage.usage,
-        )
-        logger.info(
-            f"Successfully ingested usage for {dashboard_usage.dashboard.fullyQualifiedName.__root__}"
-        )
+            self.metadata.publish_dashboard_usage(
+                dashboard=dashboard_usage.dashboard,
+                dashboard_usage_request=dashboard_usage.usage,
+            )
+            logger.info(
+                f"Successfully ingested usage for {dashboard_usage.dashboard.fullyQualifiedName.__root__}"
+            )
+        except Exception as err:
+            logger.debug(traceback.format_exc())
+            logger.error(err)
 
     def write_tables(self, db_schema_and_table: OMetaDatabaseAndTable):
         try:
@@ -226,7 +256,6 @@ class MetadataRestSink(Sink[Entity]):
                 db_schema_and_table.table.description = (
                     db_schema_and_table.table.description.__root__.strip()
                 )
-
             table_request = CreateTableRequest(
                 name=db_schema_and_table.table.name.__root__,
                 tableType=db_schema_and_table.table.tableType,
@@ -310,7 +339,7 @@ class MetadataRestSink(Sink[Entity]):
             self.status.records_written(
                 f"Table: {db_schema_and_table.database.name.__root__}.{created_table.name.__root__}"
             )
-        except (APIError, ValidationError) as err:
+        except (APIError, HTTPError, ValidationError) as err:
             logger.error(
                 "Failed to ingest table {} in database {}".format(
                     db_schema_and_table.table.name.__root__,
@@ -321,105 +350,9 @@ class MetadataRestSink(Sink[Entity]):
             logger.error(err)
             self.status.failure(f"Table: {db_schema_and_table.table.name.__root__}")
 
-    def write_topics(self, topic: Topic) -> None:
-        try:
-            topic_request = CreateTopicRequest(
-                name=topic.name,
-                displayName=topic.displayName,
-                description=topic.description,
-                service=topic.service,
-                partitions=topic.partitions,
-                replicationFactor=topic.replicationFactor,
-                maximumMessageSize=topic.maximumMessageSize,
-                retentionTime=topic.retentionTime,
-                cleanupPolicies=topic.cleanupPolicies,
-                topicConfig=topic.topicConfig,
-            )
-            if topic.schemaType:
-                topic_request.schemaType = topic.schemaType
-                topic_request.schemaText = topic.schemaText
-            created_topic = self.metadata.create_or_update(topic_request)
-
-            if topic.sampleData:
-                self.metadata.ingest_topic_sample_data(created_topic, topic.sampleData)
-
-            logger.info(f"Successfully ingested topic {created_topic.name.__root__}")
-            self.status.records_written(f"Topic: {created_topic.name.__root__}")
-        except (APIError, ValidationError) as err:
-            logger.error(f"Failed to ingest topic {topic.name.__root__}")
+        except Exception as err:
+            logger.debug(traceback.format_exc())
             logger.error(err)
-            self.status.failure(f"Topic: {topic.name}")
-
-    def write_charts(self, chart: CreateChartRequest):
-        try:
-            created_chart = self.metadata.create_or_update(chart)
-            logger.info(f"Successfully ingested chart {created_chart.displayName}")
-            self.status.records_written(f"Chart: {created_chart.displayName}")
-        except (APIError, ValidationError) as err:
-            logger.error(f"Failed to ingest chart {chart.displayName}")
-            logger.error(err)
-            self.status.failure(f"Chart: {chart.displayName}")
-
-    def write_dashboards(self, dashboard: CreateDashboardRequest):
-        try:
-            created_dashboard = self.metadata.create_or_update(dashboard)
-            logger.info(
-                f"Successfully ingested dashboard {created_dashboard.displayName}"
-            )
-            self.status.records_written(f"Dashboard: {created_dashboard.displayName}")
-        except (APIError, ValidationError) as err:
-            logger.error(f"Failed to ingest dashboard {dashboard.name}")
-            logger.error(err)
-            self.status.failure(f"Dashboard {dashboard.name}")
-
-    def write_locations(self, location: Location):
-        try:
-            created_location = self._create_location(location)
-            logger.info(f"Successfully ingested Location {created_location.name}")
-            self.status.records_written(f"Location: {created_location.name}")
-        except (APIError, ValidationError) as err:
-            logger.error(f"Failed to ingest Location {location.name}")
-            logger.error(err)
-            self.status.failure(f"Location: {location.name}")
-
-    def write_pipelines_create(self, pipeline: CreatePipelineRequest) -> None:
-        """
-        Proper implementation of write_pipelines.
-        Send the CreatePipelineRequest to the OM API
-        :param pipeline: Create Pipeline Entity
-        """
-        try:
-            created_pipeline = self.metadata.create_or_update(pipeline)
-            logger.info(
-                f"Successfully ingested Pipeline {created_pipeline.displayName or created_pipeline.name.__root__}"
-            )
-            self.status.records_written(
-                f"Pipeline: {created_pipeline.displayName or created_pipeline.name.__root__}"
-            )
-        except (APIError, ValidationError) as err:
-            logger.error(f"Failed to ingest pipeline {pipeline.name}")
-            logger.error(err)
-            self.status.failure(f"Pipeline: {pipeline.name}")
-
-    def write_pipelines(self, pipeline: Pipeline):
-        try:
-            pipeline_request = CreatePipelineRequest(
-                name=pipeline.name,
-                displayName=pipeline.displayName,
-                description=pipeline.description,
-                pipelineUrl=pipeline.pipelineUrl,
-                tasks=pipeline.tasks,
-                service=pipeline.service,
-            )
-            created_pipeline = self.metadata.create_or_update(pipeline_request)
-            logger.info(
-                f"Successfully ingested Pipeline {created_pipeline.displayName}"
-            )
-            self.status.records_written(f"Pipeline: {created_pipeline.displayName}")
-        except (APIError, ValidationError) as err:
-            logger.error(f"Failed to ingest pipeline {pipeline.name}")
-            logger.error(err)
-            self.status.failure(f"Pipeline: {pipeline.name}")
 
     def write_policies(self, ometa_policy: OMetaPolicy) -> None:
         try:
@@ -450,16 +383,20 @@ class MetadataRestSink(Sink[Entity]):
             self.status.failure(f"Policy: {ometa_policy.policy.name}")
 
     def _create_location(self, location: Location) -> Location:
-        location_request = CreateLocationRequest(
-            name=location.name,
-            path=location.path,
-            description=location.description,
-            locationType=location.locationType,
-            tags=location.tags,
-            owner=location.owner,
-            service=location.service,
-        )
-        return self.metadata.create_or_update(location_request)
+        try:
+            location_request = CreateLocationRequest(
+                name=location.name,
+                path=location.path,
+                description=location.description,
+                locationType=location.locationType,
+                tags=location.tags,
+                owner=location.owner,
+                service=location.service,
+            )
+            return self.metadata.create_or_update(location_request)
+        except Exception as err:
+            logger.debug(traceback.format_exc())
+            logger.error(err)
 
     def write_tag_category(self, record: OMetaTagAndCategory):
         try:
@@ -493,17 +430,8 @@ class MetadataRestSink(Sink[Entity]):
         except (APIError, ValidationError) as err:
             logger.error(f"Failed to ingest lineage {add_lineage}")
             logger.error(err)
+            logger.debug(traceback.format_exc())
             self.status.failure(f"Lineage: {add_lineage}")
-
-    def write_ml_model(self, model: CreateMlModelRequest):
-        try:
-            created_model = self.metadata.create_or_update(model)
-            logger.info(f"Successfully added Model {created_model.name}")
-            self.status.records_written(f"Model: {created_model.name}")
-        except (APIError, ValidationError) as err:
-            logger.error(f"Failed to ingest Model {model.name}")
-            logger.error(err)
-            self.status.failure(f"Model: {model.name}")
 
     def _create_role(self, create_role: CreateRoleRequest) -> Role:
         try:
@@ -658,6 +586,72 @@ class MetadataRestSink(Sink[Entity]):
             )
             self.status.records_written(f"Pipeline Status: {record.pipeline_fqn}")
 
+        except Exception as err:
+            logger.debug(traceback.format_exc())
+            logger.error(err)
+
+    def write_profile_sample_data(self, record: OMetaTableProfileSampleData):
+        """
+        Use the /tableProfile endpoint to ingest sample profile data
+        """
+        try:
+            self.metadata.ingest_table_profile_data(
+                table=record.table, table_profile=record.profile
+            )
+
+            logger.info(
+                f"Successfully ingested profile for table {record.table.name.__root__}"
+            )
+            self.status.records_written(
+                f"Profile: {record.table.name.__root__} - {record.profile.timestamp.__root__}"
+            )
+        except Exception as err:
+            logger.debug(traceback.format_exc())
+            logger.error(err)
+
+    def write_test_suite_sample(self, record: OMetaTestSuiteSample):
+        """
+        Use the /testSuite endpoint to ingest sample test suite
+        """
+        try:
+            self.metadata.create_or_update(record.test_suite)
+            logger.info(
+                f"Successfully created test Suite {record.test_suite.name.__root__}"
+            )
+            self.status.records_written(f"testSuite: {record.test_suite.name.__root__}")
+        except Exception as err:
+            logger.debug(traceback.format_exc())
+            logger.error(err)
+
+    def write_test_case_sample(self, record: OMetaTestCaseSample):
+        """
+        Use the /testCase endpoint to ingest sample test suite
+        """
+        try:
+            self.metadata.create_or_update(record.test_case)
+            logger.info(
+                f"Successfully created test case {record.test_case.name.__root__}"
+            )
+            self.status.records_written(f"testCase: {record.test_case.name.__root__}")
+        except Exception as err:
+            logger.debug(traceback.format_exc())
+            logger.error(err)
+
+    def write_test_case_results_sample(self, record: OMetaTestCaseResultsSample):
+        """
+        Use the /testCase endpoint to ingest sample test suite
+        """
+        try:
+            self.metadata.add_test_case_results(
+                record.test_case_results,
+                record.test_case_uuid,
+            )
+            logger.info(
+                f"Successfully ingested test case results for test case ID {record.test_case_uuid}"
+            )
+            self.status.records_written(
+                f"testCaseResults: {record.test_case_uuid} - {record.test_case_results.timestamp.__root__}"
+            )
         except Exception as err:
             logger.debug(traceback.format_exc())
             logger.error(err)

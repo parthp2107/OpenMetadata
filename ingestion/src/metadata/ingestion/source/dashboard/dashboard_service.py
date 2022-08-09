@@ -79,7 +79,8 @@ class DashboardServiceTopology(ServiceTopology):
             NodeStage(
                 type_=DashboardService,
                 context="dashboard_service",
-                processor="yield_dashboard_service",
+                processor="yield_create_request_dashboard_service",
+                overwrite=False,
             ),
             NodeStage(
                 type_=OMetaTagAndCategory,
@@ -166,7 +167,7 @@ class DashboardServiceSource(TopologyRunnerMixin, Source, ABC):
 
     @abstractmethod
     def yield_dashboard_lineage_details(
-        self, dashboard_details: Any
+        self, dashboard_details: Any, db_service_name: str
     ) -> Optional[Iterable[AddLineageRequest]]:
         """
         Get lineage between dashboard and data sources
@@ -204,8 +205,10 @@ class DashboardServiceSource(TopologyRunnerMixin, Source, ABC):
         """
         Yields lineage if config is enabled
         """
-        if self.source_config.dbServiceName:
-            yield from self.yield_dashboard_lineage_details(dashboard_details) or []
+        for db_service_name in self.source_config.dbServiceNames or []:
+            yield from self.yield_dashboard_lineage_details(
+                dashboard_details, db_service_name
+            ) or []
 
     def yield_tag(self, *args, **kwargs) -> Optional[Iterable[OMetaTagAndCategory]]:
         """
@@ -267,7 +270,7 @@ class DashboardServiceSource(TopologyRunnerMixin, Source, ABC):
     def get_services(self) -> Iterable[WorkflowSource]:
         yield self.config
 
-    def yield_dashboard_service(self, config: WorkflowSource):
+    def yield_create_request_dashboard_service(self, config: WorkflowSource):
         yield self.metadata.get_create_service_from_source(
             entity=DashboardService, config=config
         )

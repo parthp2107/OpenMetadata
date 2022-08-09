@@ -17,6 +17,7 @@ import {
   GlobalSettingOptions,
   GlobalSettingsMenuCategory,
 } from '../constants/globalSettings.constants';
+import TeamsPage from '../pages/teams/TeamsPage';
 import { getSettingCategoryPath, getSettingPath } from '../utils/RouterUtils';
 import withSuspenseFallback from './withSuspenseFallback';
 
@@ -34,6 +35,12 @@ const CustomPropertiesPageV1 = withSuspenseFallback(
     () => import('../pages/CustomPropertiesPage/CustomPropertiesPageV1')
   )
 );
+const RolesPageComponent = withSuspenseFallback(
+  React.lazy(() => import('../pages/RolesPage/RolesPage.component'))
+);
+const UserListPageV1 = withSuspenseFallback(
+  React.lazy(() => import('../pages/UserListPage/UserListPageV1'))
+);
 
 const GlobalSettingRouter = () => {
   return (
@@ -46,6 +53,37 @@ const GlobalSettingRouter = () => {
           )}
         />
       </Route>
+      <Route
+        exact
+        component={TeamsPage}
+        path={getSettingPath(
+          GlobalSettingsMenuCategory.ACCESS,
+          GlobalSettingOptions.TEAMS
+        )}
+      />
+      <Route
+        exact
+        component={TeamsPage}
+        path={getSettingPath(
+          GlobalSettingsMenuCategory.ACCESS,
+          GlobalSettingOptions.TEAMS,
+          true
+        )}
+      />
+      <Route
+        exact
+        component={RolesPageComponent}
+        path={getSettingPath(
+          GlobalSettingsMenuCategory.ACCESS,
+          GlobalSettingOptions.ROLES
+        )}
+      />
+      <Route
+        exact
+        component={UserListPageV1}
+        path={getSettingCategoryPath(GlobalSettingsMenuCategory.ACCESS)}
+      />
+
       <Route
         exact
         component={WebhooksPageV1}

@@ -13,6 +13,8 @@
 
 package org.openmetadata.catalog.resources.policies;
 
+import static org.openmetadata.common.utils.CommonUtil.listOrEmpty;
+
 import io.swagger.annotations.Api;
 import io.swagger.v3.oas.annotations.ExternalDocumentation;
 import io.swagger.v3.oas.annotations.Operation;
@@ -59,7 +61,6 @@ import org.openmetadata.catalog.resources.Collection;
 import org.openmetadata.catalog.resources.EntityResource;
 import org.openmetadata.catalog.security.Authorizer;
 import org.openmetadata.catalog.security.policyevaluator.PolicyCache;
-import org.openmetadata.catalog.security.policyevaluator.PolicyEvaluator;
 import org.openmetadata.catalog.type.EntityHistory;
 import org.openmetadata.catalog.type.EntityReference;
 import org.openmetadata.catalog.type.Include;
@@ -73,7 +74,7 @@ import org.openmetadata.catalog.util.ResultList;
 @Api(value = "Policies collection", tags = "Policies collection")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-@Collection(name = "policies")
+@Collection(name = "policies", order = 0)
 public class PolicyResource extends EntityResource<Policy, PolicyRepository> {
   public static final String COLLECTION_PATH = "v1/policies/";
 
@@ -89,29 +90,9 @@ public class PolicyResource extends EntityResource<Policy, PolicyRepository> {
 
   @SuppressWarnings("unused") // Method is used for reflection
   public void initialize(CatalogApplicationConfig config) throws IOException {
-    // Set up the PolicyEvaluator, before loading seed data.
-    PolicyEvaluator policyEvaluator = PolicyEvaluator.getInstance();
-
     // Load any existing rules from database, before loading seed data.
     dao.initSeedDataFromResources();
-    initResourceDescriptors();
-  }
-
-  /** Initialize list of resources and the corresponding operations */
-  private void initResourceDescriptors() throws IOException {
-    List<String> jsonDataFiles = EntityUtil.getJsonDataResources(".*json/data/ResourceDescriptors.json$");
-    if (jsonDataFiles.size() != 1) {
-      LOG.warn("Invalid number of jsonDataFiles {}. Only one expected.", jsonDataFiles.size());
-      return;
-    }
-    String jsonDataFile = jsonDataFiles.get(0);
-    try {
-      String json = IOUtil.toString(getClass().getClassLoader().getResourceAsStream(jsonDataFile));
-      List<ResourceDescriptor> resourceDetails = JsonUtils.readObjects(json, ResourceDescriptor.class);
-      ResourceRegistry.add(resourceDetails);
-    } catch (Exception e) {
-      LOG.warn("Failed to initialize the {} from file {}", entityType, jsonDataFile, e);
-    }
+    ResourceRegistry.add(listOrEmpty(PolicyResource.getResourceDescriptors()));
   }
 
   public static class PolicyList extends ResultList<Policy> {
@@ -363,7 +344,7 @@ public class PolicyResource extends EntityResource<Policy, PolicyRepository> {
       throws IOException {
     Response response = patchInternal(uriInfo, securityContext, id, patch);
     Policy policy = (Policy) response.getEntity();
-    PolicyCache.invalidatePolicy(policy.getId());
+    PolicyCache.getInstance().invalidatePolicy(policy.getId());
     return response;
   }
 
@@ -385,7 +366,7 @@ public class PolicyResource extends EntityResource<Policy, PolicyRepository> {
       throws IOException {
     Policy policy = getPolicy(create, securityContext.getUserPrincipal().getName());
     Response response = createOrUpdate(uriInfo, securityContext, policy, true);
-    PolicyCache.invalidatePolicy(policy.getId());
+    PolicyCache.getInstance().invalidatePolicy(policy.getId());
     return response;
   }
 
@@ -410,11 +391,11 @@ public class PolicyResource extends EntityResource<Policy, PolicyRepository> {
       @Parameter(description = "Policy Id", schema = @Schema(type = "string")) @PathParam("id") String id)
       throws IOException {
     Response response = delete(uriInfo, securityContext, id, false, hardDelete, true);
-    PolicyCache.invalidatePolicy(UUID.fromString(id));
+    PolicyCache.getInstance().invalidatePolicy(UUID.fromString(id));
     return response;
   }
 
-  private Policy getPolicy(CreatePolicy create, String user) {
+  private Policy getPolicy(CreatePolicy create, String user) throws IOException {
     Policy policy =
         copy(new Policy(), create, user)
             .withPolicyType(create.getPolicyType())
@@ -424,5 +405,21 @@ public class PolicyResource extends EntityResource<Policy, PolicyRepository> {
       policy = policy.withLocation(new EntityReference().withId(create.getLocation()));
     }
     return policy;
+  }
+
+  public static List<ResourceDescriptor> getResourceDescriptors() throws IOException {
+    List<String> jsonDataFiles = EntityUtil.getJsonDataResources(".*json/data/ResourceDescriptors.json$");
+    if (jsonDataFiles.size() != 1) {
+      LOG.warn("Invalid number of jsonDataFiles {}. Only one expected.", jsonDataFiles.size());
+      return null;
+    }
+    String jsonDataFile = jsonDataFiles.get(0);
+    try {
+      String json = IOUtil.toString(PolicyResource.class.getClassLoader().getResourceAsStream(jsonDataFile));
+      return JsonUtils.readObjects(json, ResourceDescriptor.class);
+    } catch (Exception e) {
+      LOG.warn("Failed to initialize the resource descriptors from file {}", jsonDataFile, e);
+    }
+    return null;
   }
 }

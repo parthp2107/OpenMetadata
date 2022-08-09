@@ -22,6 +22,7 @@ import static org.openmetadata.common.utils.CommonUtil.listOrEmpty;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -118,7 +119,7 @@ public class ChangeEventHandler implements EventHandler {
               EntityLink about = EntityLink.parse(thread.getAbout());
               feedDao.create(thread, entity.getId(), owner, about);
               String jsonThread = mapper.writeValueAsString(thread);
-              WebSocketManager.getInstance().broadCastMessageToAll(WebSocketManager.feedBroadcastChannel, jsonThread);
+              WebSocketManager.getInstance().broadCastMessageToAll(WebSocketManager.FEED_BROADCAST_CHANNEL, jsonThread);
             }
           }
         }
@@ -140,23 +141,23 @@ public class ChangeEventHandler implements EventHandler {
             if (thread.getPostsCount() == 0) {
               List<EntityReference> assignees = thread.getTask().getAssignees();
               assignees.forEach(
-                  (e) -> {
+                  e -> {
                     if (Entity.USER.equals(e.getType())) {
                       WebSocketManager.getInstance()
-                          .sendToOne(e.getId(), WebSocketManager.taskBroadcastChannel, jsonThread);
+                          .sendToOne(e.getId(), WebSocketManager.TASK_BROADCAST_CHANNEL, jsonThread);
                     } else if (Entity.TEAM.equals(e.getType())) {
                       // fetch all that are there in the team
                       List<EntityRelationshipRecord> records =
                           dao.relationshipDAO()
                               .findTo(e.getId().toString(), TEAM, Relationship.HAS.ordinal(), Entity.USER);
                       WebSocketManager.getInstance()
-                          .sendToManyWithString(records, WebSocketManager.taskBroadcastChannel, jsonThread);
+                          .sendToManyWithString(records, WebSocketManager.TASK_BROADCAST_CHANNEL, jsonThread);
                     }
                   });
-              return;
             }
+            break;
           case Conversation:
-            WebSocketManager.getInstance().broadCastMessageToAll(WebSocketManager.feedBroadcastChannel, jsonThread);
+            WebSocketManager.getInstance().broadCastMessageToAll(WebSocketManager.FEED_BROADCAST_CHANNEL, jsonThread);
             List<EntityLink> mentions;
             if (thread.getPostsCount() == 0) {
               mentions = MessageParser.getEntityLinks(thread.getMessage());
@@ -165,29 +166,30 @@ public class ChangeEventHandler implements EventHandler {
               mentions = MessageParser.getEntityLinks(latestPost.getMessage());
             }
             mentions.forEach(
-                (entityLink) -> {
+                entityLink -> {
                   String fqn = entityLink.getEntityFQN();
-                  switch (entityLink.getEntityType()) {
-                    case USER:
-                      User user = dao.userDAO().findEntityByName(fqn);
-                      WebSocketManager.getInstance()
-                          .sendToOne(user.getId(), WebSocketManager.mentionChannel, jsonThread);
-                      break;
-                    case TEAM:
-                      Team team = dao.teamDAO().findEntityByName(fqn);
-                      // fetch all that are there in the team
-                      List<EntityRelationshipRecord> records =
-                          dao.relationshipDAO()
-                              .findTo(team.getId().toString(), TEAM, Relationship.HAS.ordinal(), Entity.USER);
-                      WebSocketManager.getInstance()
-                          .sendToManyWithString(records, WebSocketManager.mentionChannel, jsonThread);
-                      break;
+                  if (USER.equals(entityLink.getEntityType())) {
+                    User user = dao.userDAO().findEntityByName(fqn);
+                    WebSocketManager.getInstance()
+                        .sendToOne(user.getId(), WebSocketManager.MENTION_CHANNEL, jsonThread);
+                  } else if (TEAM.equals(entityLink.getEntityType())) {
+                    Team team = dao.teamDAO().findEntityByName(fqn);
+                    // fetch all that are there in the team
+                    List<EntityRelationshipRecord> records =
+                        dao.relationshipDAO().findTo(team.getId().toString(), TEAM, Relationship.HAS.ordinal(), USER);
+                    WebSocketManager.getInstance()
+                        .sendToManyWithString(records, WebSocketManager.MENTION_CHANNEL, jsonThread);
                   }
                 });
-            return;
+            break;
           case Announcement:
-          default:
-            return;
+            AnnouncementDetails announcementDetails = thread.getAnnouncement();
+            Long currentTimestamp = Instant.now().getEpochSecond();
+            if (announcementDetails.getStartTime() <= currentTimestamp
+                && currentTimestamp <= announcementDetails.getEndTime()) {
+              WebSocketManager.getInstance().broadCastMessageToAll(WebSocketManager.ANNOUNCEMENT_CHANNEL, jsonThread);
+            }
+            break;
         }
       } catch (JsonProcessingException e) {
         throw new RuntimeException(e);
@@ -234,13 +236,10 @@ public class ChangeEventHandler implements EventHandler {
       String entityType = entityReference.getType();
       String entityFQN = entityReference.getFullyQualifiedName();
       EventType eventType = null;
-      switch (changeType) {
-        case RestUtil.ENTITY_UPDATED:
-          eventType = ENTITY_UPDATED;
-          break;
-        case RestUtil.ENTITY_SOFT_DELETED:
-          eventType = ENTITY_SOFT_DELETED;
-          break;
+      if (RestUtil.ENTITY_UPDATED.equals(changeType)) {
+        eventType = ENTITY_UPDATED;
+      } else if (RestUtil.ENTITY_SOFT_DELETED.equals(changeType)) {
+        eventType = ENTITY_SOFT_DELETED;
       }
 
       return getChangeEvent(eventType, entityType, entityInterface)

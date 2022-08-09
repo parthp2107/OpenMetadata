@@ -48,7 +48,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.openmetadata.catalog.CatalogApplicationConfig;
 import org.openmetadata.catalog.Entity;
 import org.openmetadata.catalog.api.teams.CreateTeam;
+import org.openmetadata.catalog.api.teams.CreateTeam.TeamType;
 import org.openmetadata.catalog.entity.teams.Team;
+import org.openmetadata.catalog.exception.CatalogExceptionMessage;
 import org.openmetadata.catalog.jdbi3.CollectionDAO;
 import org.openmetadata.catalog.jdbi3.ListFilter;
 import org.openmetadata.catalog.jdbi3.TeamRepository;
@@ -65,7 +67,7 @@ import org.openmetadata.catalog.util.ResultList;
 @Api(value = "Teams collection", tags = "Teams collection")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-@Collection(name = "teams")
+@Collection(name = "teams", order = 3) // Load after roles, and policy resources
 public class TeamResource extends EntityResource<Team, TeamRepository> {
   public static final String COLLECTION_PATH = "/v1/teams/";
 
@@ -87,7 +89,7 @@ public class TeamResource extends EntityResource<Team, TeamRepository> {
 
   @SuppressWarnings("unused") // Method used for reflection
   public void initialize(CatalogApplicationConfig config) throws IOException {
-    dao.initOrganization("organization");
+    dao.initOrganization();
   }
 
   public static class TeamList extends ResultList<Team> {
@@ -99,7 +101,8 @@ public class TeamResource extends EntityResource<Team, TeamRepository> {
     }
   }
 
-  static final String FIELDS = "owner,profile,users,owns,defaultRoles,parents,children,policies";
+  static final String FIELDS =
+      "owner,profile,users,owns,defaultRoles,parents,children,policies,userCount,childrenCount";
 
   @GET
   @Valid
@@ -137,6 +140,9 @@ public class TeamResource extends EntityResource<Team, TeamRepository> {
       @Parameter(description = "Returns list of teams after this cursor", schema = @Schema(type = "string"))
           @QueryParam("after")
           String after,
+      @Parameter(description = "Filter the results by parent team name", schema = @Schema(type = "string"))
+          @QueryParam("parentTeam")
+          String parentTeam,
       @Parameter(
               description = "Include all, deleted, or non-deleted entities.",
               schema = @Schema(implementation = Include.class))
@@ -144,7 +150,7 @@ public class TeamResource extends EntityResource<Team, TeamRepository> {
           @DefaultValue("non-deleted")
           Include include)
       throws IOException {
-    ListFilter filter = new ListFilter(include);
+    ListFilter filter = new ListFilter(include).addQueryParam("parentTeam", parentTeam);
     return super.listInternal(uriInfo, securityContext, fieldsParam, filter, limitParam, before, after);
   }
 
@@ -353,7 +359,13 @@ public class TeamResource extends EntityResource<Team, TeamRepository> {
     return delete(uriInfo, securityContext, id, false, hardDelete, true);
   }
 
-  private Team getTeam(CreateTeam ct, String user) {
+  private Team getTeam(CreateTeam ct, String user) throws IOException {
+    if (ct.getTeamType().equals(TeamType.ORGANIZATION)) {
+      throw new IllegalArgumentException(CatalogExceptionMessage.createOrganization());
+    }
+    if (ct.getTeamType().equals(TeamType.GROUP) && ct.getChildren() != null) {
+      throw new IllegalArgumentException(CatalogExceptionMessage.createGroup());
+    }
     return copy(new Team(), ct, user)
         .withProfile(ct.getProfile())
         .withIsJoinable(ct.getIsJoinable())

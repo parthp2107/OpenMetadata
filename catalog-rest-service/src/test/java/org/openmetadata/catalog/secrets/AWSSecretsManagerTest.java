@@ -36,7 +36,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.openmetadata.catalog.airflow.AirflowConfiguration;
 import org.openmetadata.catalog.airflow.AuthConfiguration;
 import org.openmetadata.catalog.api.services.CreateDatabaseService;
-import org.openmetadata.catalog.api.services.DatabaseConnection;
+import org.openmetadata.catalog.entity.services.ServiceType;
 import org.openmetadata.catalog.fixtures.ConfigurationFixtures;
 import org.openmetadata.catalog.services.connections.database.MysqlConnection;
 import org.openmetadata.catalog.services.connections.metadata.OpenMetadataServerConnection;
@@ -51,12 +51,11 @@ import software.amazon.awssdk.services.secretsmanager.model.UpdateSecretRequest;
 public class AWSSecretsManagerTest {
 
   private static final String AUTH_PROVIDER_SECRET_ID_SUFFIX = "auth-provider";
-
   private static final boolean ENCRYPT = true;
   private static final boolean DECRYPT = false;
   private static final String EXPECTED_CONNECTION_JSON =
       "{\"type\":\"Mysql\",\"scheme\":\"mysql+pymysql\",\"password\":\"openmetadata-test\",\"supportsMetadataExtraction\":true,\"supportsProfiler\":true}";
-  private static final String EXPECTED_SECRET_ID = "openmetadata-database-mysql-test";
+  private static final String EXPECTED_SECRET_ID = "/openmetadata/service/database/mysql/test";
 
   @Mock private SecretsManagerClient secretsManagerClient;
 
@@ -70,7 +69,7 @@ public class AWSSecretsManagerTest {
     parameters.put("secretAccessKey", "654321");
     SecretsManagerConfiguration config = new SecretsManagerConfiguration();
     config.setParameters(parameters);
-    secretsManager = AWSSecretsManager.getInstance(config);
+    secretsManager = AWSSecretsManager.getInstance(config, "openmetadata");
     secretsManager.setSecretsClient(secretsManagerClient);
     reset(secretsManagerClient);
   }
@@ -136,7 +135,7 @@ public class AWSSecretsManagerTest {
       OpenMetadataServerConnection.AuthProvider authProvider,
       AuthConfiguration authConfig)
       throws JsonProcessingException {
-    String expectedSecretId = String.format("openmetadata-%s-%s", AUTH_PROVIDER_SECRET_ID_SUFFIX, authProvider);
+    String expectedSecretId = String.format("/openmetadata/%s/%s", AUTH_PROVIDER_SECRET_ID_SUFFIX, authProvider);
     AirflowConfiguration airflowConfiguration = ConfigurationFixtures.buildAirflowConfig(authProvider);
     airflowConfiguration.setAuthConfig(authConfig);
     AirflowConfiguration expectedAirflowConfiguration = ConfigurationFixtures.buildAirflowConfig(authProvider);
@@ -168,22 +167,20 @@ public class AWSSecretsManagerTest {
   }
 
   private void testEncryptDecryptServiceConnection(boolean decrypt) {
-    DatabaseConnection databaseConnection = new DatabaseConnection();
     MysqlConnection mysqlConnection = new MysqlConnection();
     mysqlConnection.setPassword("openmetadata-test");
-    databaseConnection.setConfig(mysqlConnection);
     CreateDatabaseService.DatabaseServiceType databaseServiceType = CreateDatabaseService.DatabaseServiceType.Mysql;
     String connectionName = "test";
 
-    secretsManager.encryptOrDecryptServiceConnection(
-        databaseConnection, databaseServiceType.value(), connectionName, decrypt);
+    Object actualConfig =
+        secretsManager.encryptOrDecryptServiceConnectionConfig(
+            mysqlConnection, databaseServiceType.value(), connectionName, ServiceType.DATABASE, decrypt);
 
     if (decrypt) {
-      assertNull(databaseConnection.getConfig());
-      assertNotSame(mysqlConnection, databaseConnection.getConfig());
+      assertNull(actualConfig);
     } else {
-      assertEquals(mysqlConnection, databaseConnection.getConfig());
-      assertNotSame(mysqlConnection, databaseConnection.getConfig());
+      assertEquals(mysqlConnection, actualConfig);
+      assertNotSame(mysqlConnection, actualConfig);
     }
   }
 

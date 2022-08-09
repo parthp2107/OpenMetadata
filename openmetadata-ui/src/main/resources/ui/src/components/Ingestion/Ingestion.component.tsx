@@ -24,6 +24,7 @@ import {
   PAGE_SIZE,
   TITLE_FOR_NON_ADMIN_ACTION,
 } from '../../constants/constants';
+import { Connection } from '../../generated/entity/services/databaseService';
 import {
   IngestionPipeline,
   PipelineType,
@@ -88,7 +89,7 @@ const Ingestion: React.FC<IngestionProps> = ({
 
   const getSupportedPipelineTypes = () => {
     let pipelineType = [];
-    const config = serviceDetails.connection?.config;
+    const config = serviceDetails.connection?.config as Connection;
     if (config) {
       config.supportsMetadataExtraction &&
         pipelineType.push(PipelineType.Metadata);
@@ -310,10 +311,13 @@ const Ingestion: React.FC<IngestionProps> = ({
           />
         );
 
-      return r?.endDate || r?.startDate ? (
+      return r?.endDate || r?.startDate || r?.timestamp ? (
         <PopOver
           html={
             <div className="tw-text-left">
+              {r.timestamp ? (
+                <p>Execution Date: {new Date(r.timestamp).toUTCString()}</p>
+              ) : null}
               {r.startDate ? (
                 <p>Start Date: {new Date(r.startDate).toUTCString()}</p>
               ) : null}

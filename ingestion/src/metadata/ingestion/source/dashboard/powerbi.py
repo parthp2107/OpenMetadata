@@ -40,16 +40,6 @@ logger = ingestion_logger()
 
 
 class PowerbiSource(DashboardServiceSource):
-    """PowerBi entity class
-    Args:
-        config:
-        metadata_config:
-    Attributes:
-        config:
-        metadata_config:
-        charts:
-    """
-
     def __init__(
         self,
         config: WorkflowSource,
@@ -59,13 +49,6 @@ class PowerbiSource(DashboardServiceSource):
 
     @classmethod
     def create(cls, config_dict, metadata_config: OpenMetadataConnection):
-        """Instantiate object
-        Args:
-            config_dict:
-            metadata_config:
-        Returns:
-            PowerBiSource
-        """
         config = WorkflowSource.parse_obj(config_dict)
         connection: PowerBIConnection = config.serviceConnection.__root__.config
         if not isinstance(connection, PowerBIConnection):
@@ -115,7 +98,7 @@ class PowerbiSource(DashboardServiceSource):
         )
 
     def yield_dashboard_lineage_details(
-        self, dashboard_details: dict
+        self, dashboard_details: dict, db_service_name: str
     ) -> Optional[Iterable[AddLineageRequest]]:
         """
         Get lineage between dashboard and data sources
@@ -136,7 +119,7 @@ class PowerbiSource(DashboardServiceSource):
                         from_fqn = fqn.build(
                             self.metadata,
                             entity_type=Database,
-                            service_name=self.source_config.dbServiceName,
+                            service_name=db_service_name,
                             database_name=database_name,
                         )
                         from_entity = self.metadata.get_by_name(
