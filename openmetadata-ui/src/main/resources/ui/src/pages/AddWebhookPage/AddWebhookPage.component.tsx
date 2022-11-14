@@ -26,9 +26,9 @@ import {
 } from '../../constants/globalSettings.constants';
 import { FormSubmitType } from '../../enums/form.enum';
 import {
-  CreateWebhook,
-  WebhookType,
-} from '../../generated/api/events/createWebhook';
+  CreateEventConfig,
+  EventConfigType,
+} from '../../generated/api/events/createEventConfig';
 import { Operation } from '../../generated/entity/policies/policy';
 import jsonData from '../../jsons/en';
 import { checkPermission } from '../../utils/PermissionsUtils';
@@ -43,10 +43,11 @@ const HEADER_TEXT_WEBHOOK: { [key: string]: string } = {
 
 const AddWebhookPage: FunctionComponent = () => {
   const history = useHistory();
-  const params = useParams<{ webhookType?: WebhookType }>();
+  const params = useParams<{ eventConfigType?: EventConfigType }>();
   const { permissions } = usePermissionProvider();
 
-  const webhookType: WebhookType = params.webhookType ?? WebhookType.Generic;
+  const eventConfigType: EventConfigType =
+    params.eventConfigType ?? EventConfigType.Generic;
   const [status, setStatus] = useState<LoadingState>('initial');
 
   const createPermission = useMemo(
@@ -56,8 +57,8 @@ const AddWebhookPage: FunctionComponent = () => {
   );
 
   const goToWebhooks = () => {
-    switch (webhookType) {
-      case WebhookType.Slack: {
+    switch (eventConfigType) {
+      case EventConfigType.Slack: {
         history.push(
           getSettingPath(
             GlobalSettingsMenuCategory.INTEGRATIONS,
@@ -68,7 +69,7 @@ const AddWebhookPage: FunctionComponent = () => {
         break;
       }
 
-      case WebhookType.Msteams: {
+      case EventConfigType.Msteams: {
         history.push(
           getSettingPath(
             GlobalSettingsMenuCategory.INTEGRATIONS,
@@ -94,7 +95,7 @@ const AddWebhookPage: FunctionComponent = () => {
     goToWebhooks();
   };
 
-  const handleSave = (data: CreateWebhook) => {
+  const handleSave = (data: CreateEventConfig) => {
     setStatus('waiting');
     addWebhook(data)
       .then((res) => {
@@ -119,10 +120,10 @@ const AddWebhookPage: FunctionComponent = () => {
       <div className="tw-self-center">
         <AddWebhook
           allowAccess={createPermission}
-          header={`Add ${HEADER_TEXT_WEBHOOK[webhookType]}`}
+          eventConfigType={eventConfigType}
+          header={`Add ${HEADER_TEXT_WEBHOOK[eventConfigType]}`}
           mode={FormSubmitType.ADD}
           saveState={status}
-          webhookType={webhookType}
           onCancel={handleCancel}
           onSave={handleSave}
         />

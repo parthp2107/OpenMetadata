@@ -11,14 +11,14 @@
  *  limitations under the License.
  */
 
-import { WebhookType } from '../../generated/api/events/createWebhook';
-import { Status, Webhook } from '../../generated/entity/events/webhook';
+import { EventConfigType } from '../../generated/api/events/createEventConfig';
+import { EventConfig, Status } from '../../generated/entity/events/eventConfig';
 import { Paging } from '../../generated/type/paging';
 
 export interface WebhooksV1Props {
-  data: Array<Webhook>;
+  data: Array<EventConfig>;
   paging: Paging;
-  webhookType?: WebhookType;
+  eventConfigType?: EventConfigType;
   selectedStatus: Status[];
   currentPage: number;
   onAddWebhook: () => void;

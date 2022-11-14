@@ -20,8 +20,8 @@ import { deleteWebhook } from '../../axiosAPIs/webhookAPI';
 import { PAGE_SIZE_MEDIUM } from '../../constants/constants';
 import { WEBHOOK_DOCS } from '../../constants/docs.constants';
 import { NO_PERMISSION_FOR_ACTION } from '../../constants/HelperTextUtil';
-import { WebhookType } from '../../generated/api/events/createWebhook';
-import { Webhook } from '../../generated/entity/events/webhook';
+import { EventConfigType } from '../../generated/api/events/createEventConfig';
+import { EventConfig } from '../../generated/entity/events/eventConfig';
 import { Operation } from '../../generated/entity/policies/policy';
 import { checkPermission } from '../../utils/PermissionsUtils';
 import { showErrorToast } from '../../utils/ToastUtils';
@@ -44,7 +44,7 @@ const WEBHOOKS_INTEGRATION: { [key: string]: string } = {
 
 const WebhooksV1: FC<WebhooksV1Props> = ({
   data = [],
-  webhookType = WebhookType.Generic,
+  eventConfigType = EventConfigType.Generic,
   paging,
   selectedStatus = [],
   onAddWebhook,
@@ -53,8 +53,8 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
   onStatusFilter,
   currentPage,
 }) => {
-  const [filteredData, setFilteredData] = useState<Array<Webhook>>(data);
-  const [selectedWebhook, setWebhook] = useState<Webhook>();
+  const [filteredData, setFilteredData] = useState<Array<EventConfig>>(data);
+  const [selectedWebhook, setWebhook] = useState<EventConfig>();
 
   const { permissions } = usePermissionProvider();
 
@@ -83,7 +83,7 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
                 placement="left"
                 title={
                   addWebhookPermission
-                    ? `Add ${WEBHOOKS_INTEGRATION[webhookType]}`
+                    ? `Add ${WEBHOOKS_INTEGRATION[eventConfigType]}`
                     : NO_PERMISSION_FOR_ACTION
                 }>
                 <ButtonAntd
@@ -96,7 +96,7 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
                   size="small"
                   type="primary"
                   onClick={onAddWebhook}>
-                  Add {WEBHOOKS_INTEGRATION[webhookType]}
+                  Add {WEBHOOKS_INTEGRATION[eventConfigType]}
                 </ButtonAntd>
               </Tooltip>
             </p>
@@ -130,7 +130,7 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
   }, [data, selectedStatus]);
 
   if (data.length === 0) {
-    return fetchErrorPlaceHolder(WEBHOOKS_INTEGRATION[webhookType]);
+    return fetchErrorPlaceHolder(WEBHOOKS_INTEGRATION[eventConfigType]);
   }
 
   return (
@@ -163,7 +163,7 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
                 theme="primary"
                 variant="contained"
                 onClick={onAddWebhook}>
-                Add {WEBHOOKS_INTEGRATION[webhookType]}
+                Add {WEBHOOKS_INTEGRATION[eventConfigType]}
               </Button>
             </Tooltip>
           </Space>

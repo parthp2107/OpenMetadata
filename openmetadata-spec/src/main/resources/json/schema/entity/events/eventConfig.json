@@ -1,18 +1,18 @@
 {
-  "$id": "https://open-metadata.org/schema/entity/events/webhook.json",
+  "$id": "https://open-metadata.org/schema/entity/events/eventConfig.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Webhook",
-  "description": "This schema defines webhook for receiving events from OpenMetadata.",
+  "title": "EventConfig",
+  "description": "This schema defines eventConfig for receiving events from OpenMetadata.",
   "type": "object",
-  "javaType": "org.openmetadata.schema.type.Webhook",
+  "javaType": "org.openmetadata.schema.type.EventConfig",
   "javaInterfaces": ["org.openmetadata.schema.EntityInterface"],
   "definitions": {
-    "webhookType": {
-      "description": "Type of webhook slack, generic, msteams, etc.",
+    "eventConfigType": {
+      "description": "Type of eventConfig slack, generic, msteams, etc.",
       "type": "string",
-      "javaType": "org.openmetadata.schema.type.WebhookType",
+      "javaType": "org.openmetadata.schema.type.EventConfigType",
       "default": "generic",
-      "enum": ["slack", "generic", "msteams"],
+      "enum": ["slack", "generic", "msteams", "elasticsearch"],
       "javaEnums": [
         {
           "name": "slack"
@@ -22,17 +22,20 @@
         },
         {
           "name": "msteams"
+        },
+        {
+          "name": "elasticsearch"
         }
       ]
     }
   },
   "properties": {
     "id": {
-      "description": "Unique ID associated with a webhook subscription.",
+      "description": "Unique ID associated with a eventConfig subscription.",
       "$ref": "../../type/basic.json#/definitions/uuid"
     },
     "name": {
-      "description": "Unique name of the application receiving webhook events.",
+      "description": "Unique name of the application receiving eventConfig events.",
       "$ref": "../../type/basic.json#/definitions/entityName"
     },
     "fullyQualifiedName": {
@@ -40,24 +43,24 @@
       "$ref": "../../type/basic.json#/definitions/fullyQualifiedEntityName"
     },
     "displayName": {
-      "description": "Display Name that identifies this webhook.",
+      "description": "Display Name that identifies this eventConfig.",
       "type": "string"
     },
-    "webhookType": {
-      "description": "Type of webhook slack, generic, msteams, etc.",
-      "$ref": "#/definitions/webhookType"
+    "eventConfigType": {
+      "description": "Type of eventConfig slack, generic, msteams, etc.",
+      "$ref": "#/definitions/eventConfigType"
     },
     "description": {
       "description": "Description of the application.",
       "$ref": "../../type/basic.json#/definitions/markdown"
     },
     "endpoint": {
-      "description": "Endpoint to receive the webhook events over POST requests.",
+      "description": "Endpoint to receive the eventConfig events over POST requests.",
       "type": "string",
       "format": "uri"
     },
     "eventFilters": {
-      "description": "Endpoint to receive the webhook events over POST requests.",
+      "description": "Endpoint to receive the eventConfig events over POST requests.",
       "type": "array",
       "items": {
         "$ref": "../../type/changeEvent.json#/definitions/eventFilter"
@@ -79,12 +82,12 @@
       "default": 12
     },
     "enabled": {
-      "description": "When set to `true`, the webhook event notification is enabled. Set it to `false` to disable the subscription. (Default `true`).",
+      "description": "When set to `true`, the eventConfig event notification is enabled. Set it to `false` to disable the subscription. (Default `true`).",
       "type": "boolean",
       "default": true
     },
     "secretKey": {
-      "description": "Secret set by the webhook client used for computing HMAC SHA256 signature of webhook payload and sent in `X-OM-Signature` header in POST requests to publish the events.",
+      "description": "Secret set by the eventConfig client used for computing HMAC SHA256 signature of eventConfig payload and sent in `X-OM-Signature` header in POST requests to publish the events.",
       "type": "string"
     },
     "version": {
@@ -100,7 +103,7 @@
       "type": "string"
     },
     "status": {
-      "description": "Status is `disabled`, when webhook was created with `enabled` set to false and it never started publishing events. Status is `active` when webhook is normally functioning and 200 OK response was received for callback notification. Status is `failed` on bad callback URL, connection failures, `1xx`, and `3xx` response was received for callback notification. Status is `awaitingRetry` when previous attempt at callback timed out or received `4xx`, `5xx` response. Status is `retryLimitReached` after all retries fail.",
+      "description": "Status is `disabled`, when eventConfig was created with `enabled` set to false and it never started publishing events. Status is `active` when eventConfig is normally functioning and 200 OK response was received for callback notification. Status is `failed` on bad callback URL, connection failures, `1xx`, and `3xx` response was received for callback notification. Status is `awaitingRetry` when previous attempt at callback timed out or received `4xx`, `5xx` response. Status is `retryLimitReached` after all retries fail.",
       "type": "string",
       "enum": [
         "disabled",
@@ -139,12 +142,16 @@
       "additionalProperties": false
     },
     "href": {
-      "description": "Link to this webhook resource.",
+      "description": "Link to this eventConfig resource.",
       "$ref": "../../type/basic.json#/definitions/href"
     },
     "changeDescription": {
       "description": "Change that lead to this version of the entity.",
       "$ref": "../../type/entityHistory.json#/definitions/changeDescription"
+    },
+    "elasticSearchConfig": {
+      "description": "Configuration of Elastic Search",
+      "$ref": "../../configuration/elasticSearchConfiguration.json"
     }
   },
   "required": ["id", "name", "endpoint", "eventFilters"],

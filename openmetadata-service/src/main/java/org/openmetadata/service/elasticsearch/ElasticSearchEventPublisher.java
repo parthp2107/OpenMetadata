@@ -73,13 +73,14 @@ import org.openmetadata.schema.settings.FailureDetails;
 import org.openmetadata.schema.type.ChangeDescription;
 import org.openmetadata.schema.type.ChangeEvent;
 import org.openmetadata.schema.type.EntityReference;
+import org.openmetadata.schema.type.EventConfig;
 import org.openmetadata.schema.type.EventType;
 import org.openmetadata.schema.type.FieldChange;
 import org.openmetadata.schema.type.TagCategory;
 import org.openmetadata.schema.type.UsageDetails;
 import org.openmetadata.service.Entity;
 import org.openmetadata.service.elasticsearch.ElasticSearchIndexDefinition.ElasticSearchIndexType;
-import org.openmetadata.service.events.AbstractEventPublisher;
+import org.openmetadata.service.events.EventPublisher;
 import org.openmetadata.service.events.errors.EventPublisherException;
 import org.openmetadata.service.jdbi3.CollectionDAO;
 import org.openmetadata.service.resources.elasticsearch.BuildSearchIndexResource;
@@ -88,7 +89,7 @@ import org.openmetadata.service.util.ElasticSearchClientUtils;
 import org.openmetadata.service.util.JsonUtils;
 
 @Slf4j
-public class ElasticSearchEventPublisher extends AbstractEventPublisher {
+public class ElasticSearchEventPublisher extends EventPublisher {
   private static final String SENDING_REQUEST_TO_ELASTIC_SEARCH = "Sending request to ElasticSearch {}";
   private final RestHighLevelClient client;
   private final ElasticSearchIndexDefinition esIndexDefinition;
@@ -96,8 +97,19 @@ public class ElasticSearchEventPublisher extends AbstractEventPublisher {
   private static final String SERVICE_NAME = "service.name";
   private static final String DATABASE_NAME = "database.name";
 
+  // Do not use
+  public ElasticSearchEventPublisher(EventConfig eventConfig, CollectionDAO dao) {
+    super(eventConfig, dao);
+    this.dao = dao;
+    // needs Db connection
+    registerElasticSearchJobs();
+    this.client = ElasticSearchClientUtils.createElasticSearchClient(eventConfig.getElasticSearchConfig());
+    esIndexDefinition = new ElasticSearchIndexDefinition(client, dao);
+    esIndexDefinition.createIndexes();
+  }
+
   public ElasticSearchEventPublisher(ElasticSearchConfiguration esConfig, CollectionDAO dao) {
-    super(esConfig.getBatchSize(), new ArrayList<>());
+    super(new EventConfig().withBatchSize(esConfig.getBatchSize()).withEventFilters(new ArrayList<>()), dao);
     this.dao = dao;
     // needs Db connection
     registerElasticSearchJobs();

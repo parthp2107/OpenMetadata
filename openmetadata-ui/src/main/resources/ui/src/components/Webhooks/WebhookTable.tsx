@@ -18,7 +18,7 @@ import { startCase } from 'lodash';
 import React, { FC, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { NO_PERMISSION_FOR_ACTION } from '../../constants/HelperTextUtil';
-import { Webhook } from '../../generated/entity/events/webhook';
+import { EventConfig } from '../../generated/entity/events/eventConfig';
 import { Operation } from '../../generated/entity/policies/policy';
 import { getEntityName, getHostNameFromURL } from '../../utils/CommonUtils';
 import { checkPermission } from '../../utils/PermissionsUtils';
@@ -35,9 +35,9 @@ const ICON: { [key: string]: string } = {
 };
 
 interface Props {
-  webhookList: Webhook[];
+  webhookList: EventConfig[];
   onEdit?: (name: string) => void;
-  onDelete?: (name: Webhook) => void;
+  onDelete?: (name: EventConfig) => void;
 }
 
 const WebhookTable: FC<Props> = ({ onEdit, webhookList, onDelete }) => {
@@ -61,7 +61,7 @@ const WebhookTable: FC<Props> = ({ onEdit, webhookList, onDelete }) => {
     [permissions]
   );
 
-  const columns: ColumnsType<Webhook> = useMemo(() => {
+  const columns: ColumnsType<EventConfig> = useMemo(() => {
     return [
       {
         title: 'Name',
@@ -72,7 +72,7 @@ const WebhookTable: FC<Props> = ({ onEdit, webhookList, onDelete }) => {
           <div className="tw-flex tw-items-center">
             <SVGIcons
               alt="webhook"
-              icon={ICON[record.webhookType as string]}
+              icon={ICON[record.eventConfigType as string]}
               width="16"
             />
             <h6 className="tw-flex tw-items-center tw-m-0 tw-heading tw-pl-1">

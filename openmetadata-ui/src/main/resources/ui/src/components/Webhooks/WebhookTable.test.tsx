@@ -14,7 +14,7 @@
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import { Webhook } from '../../generated/entity/events/webhook';
+import { EventConfig } from '../../generated/entity/events/eventConfig';
 import WebhookTable from './WebhookTable';
 
 jest.mock('../../constants/HelperTextUtil', () => ({
@@ -59,7 +59,7 @@ const mockWebhooks = [
     id: '916605d8-55e4-411f-909d-8237eecaf9d5',
     name: 'TestingSlack',
     fullyQualifiedName: 'TestingSlack',
-    webhookType: 'slack',
+    eventConfigType: 'slack',
     description: '',
     endpoint: '',
     eventFilters: [
@@ -259,7 +259,7 @@ const mockWebhooks = [
     updatedBy: 'sachin.c',
     status: 'active',
     href: 'http://localhost:8585/api/v1/webhook/916605d8-55e4-411f-909d-8237eecaf9d5',
-  } as Webhook,
+  } as EventConfig,
 ];
 
 const onEdit = jest.fn();

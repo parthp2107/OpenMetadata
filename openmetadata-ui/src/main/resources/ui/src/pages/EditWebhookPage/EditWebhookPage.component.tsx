@@ -30,8 +30,11 @@ import {
   GlobalSettingsMenuCategory,
 } from '../../constants/globalSettings.constants';
 import { FormSubmitType } from '../../enums/form.enum';
-import { CreateWebhook } from '../../generated/api/events/createWebhook';
-import { Webhook, WebhookType } from '../../generated/entity/events/webhook';
+import { CreateEventConfig } from '../../generated/api/events/createEventConfig';
+import {
+  EventConfig,
+  EventConfigType,
+} from '../../generated/entity/events/eventConfig';
 import { Operation } from '../../generated/entity/policies/policy';
 import jsonData from '../../jsons/en';
 import { checkPermission } from '../../utils/PermissionsUtils';
@@ -49,7 +52,7 @@ const EditWebhookPage: FunctionComponent = () => {
   const history = useHistory();
   const { permissions } = usePermissionProvider();
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [webhookData, setWebhookData] = useState<Webhook>();
+  const [webhookData, setWebhookData] = useState<EventConfig>();
   const [status, setStatus] = useState<LoadingState>('initial');
   const [deleteStatus, setDeleteStatus] = useState<LoadingState>('initial');
 
@@ -83,12 +86,12 @@ const EditWebhookPage: FunctionComponent = () => {
 
   const goToWebhooks = () => {
     let type = GlobalSettingOptions.WEBHOOK;
-    switch (webhookData?.webhookType) {
-      case WebhookType.Msteams:
+    switch (webhookData?.eventConfigType) {
+      case EventConfigType.Msteams:
         type = GlobalSettingOptions.MSTEAMS;
 
         break;
-      case WebhookType.Slack:
+      case EventConfigType.Slack:
         type = GlobalSettingOptions.SLACK;
 
         break;
@@ -106,7 +109,7 @@ const EditWebhookPage: FunctionComponent = () => {
     goToWebhooks();
   };
 
-  const handleSave = (data: CreateWebhook) => {
+  const handleSave = (data: CreateEventConfig) => {
     setStatus('waiting');
     const { name, secretKey } = webhookData || data;
     updateWebhook({ ...data, name, secretKey })
@@ -159,12 +162,14 @@ const EditWebhookPage: FunctionComponent = () => {
             allowAccess={createPermission || editPermission}
             data={webhookData}
             deleteState={deleteStatus}
+            eventConfigType={webhookData?.eventConfigType}
             header={
-              EDIT_HEADER_WEBHOOKS_TITLE[webhookData?.webhookType || 'generic']
+              EDIT_HEADER_WEBHOOKS_TITLE[
+                webhookData?.eventConfigType || 'generic'
+              ]
             }
             mode={FormSubmitType.EDIT}
             saveState={status}
-            webhookType={webhookData?.webhookType}
             onCancel={handleCancel}
             onDelete={handleDelete}
             onSave={handleSave}

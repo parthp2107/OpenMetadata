@@ -73,7 +73,7 @@ import { GlossaryTerm } from '../generated/entity/data/glossaryTerm';
 import { Pipeline } from '../generated/entity/data/pipeline';
 import { Table } from '../generated/entity/data/table';
 import { Topic } from '../generated/entity/data/topic';
-import { Webhook } from '../generated/entity/events/webhook';
+import { EventConfig } from '../generated/entity/events/eventConfig';
 import { ThreadTaskStatus, ThreadType } from '../generated/entity/feed/thread';
 import { Policy } from '../generated/entity/policies/policy';
 import { PipelineType } from '../generated/entity/services/ingestionPipelines/ingestionPipeline';
@@ -664,7 +664,7 @@ export const getEntityName = (
     | Policy
     | Role
     | GlossaryTerm
-    | Webhook
+    | EventConfig
     | Bot
 ) => {
   return entity?.displayName || entity?.name || '';

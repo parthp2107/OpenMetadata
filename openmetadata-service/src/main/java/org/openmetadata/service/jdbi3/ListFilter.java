@@ -46,8 +46,8 @@ public class ListFilter {
     condition = addCondition(condition, getServiceCondition(tableName));
     condition = addCondition(condition, getParentCondition(tableName));
     condition = addCondition(condition, getCategoryCondition(tableName));
-    condition = addCondition(condition, getWebhookCondition(tableName));
-    condition = addCondition(condition, getWebhookTypeCondition(tableName));
+    condition = addCondition(condition, getEventConfigStatusCondition(tableName));
+    condition = addCondition(condition, getEventConfigTypeCondition(tableName));
     return condition.isEmpty() ? "WHERE TRUE" : "WHERE " + condition;
   }
 
@@ -82,14 +82,14 @@ public class ListFilter {
     return category == null ? "" : getCategoryPrefixCondition(tableName, escape(category));
   }
 
-  public String getWebhookCondition(String tableName) {
+  public String getEventConfigStatusCondition(String tableName) {
     String webhookStatus = queryParams.get("status");
     return webhookStatus == null ? "" : getStatusPrefixCondition(tableName, escape(webhookStatus));
   }
 
-  public String getWebhookTypeCondition(String tableName) {
-    String webhookType = queryParams.get("webhookType");
-    return webhookType == null ? "" : getWebhookTypePrefixCondition(tableName, escape(webhookType));
+  public String getEventConfigTypeCondition(String tableName) {
+    String eventConfigType = queryParams.get("eventConfigType");
+    return eventConfigType == null ? "" : getWebhookTypePrefixCondition(tableName, escape(eventConfigType));
   }
 
   private String getFqnPrefixCondition(String tableName, String fqnPrefix) {
@@ -103,8 +103,8 @@ public class ListFilter {
 
   private String getWebhookTypePrefixCondition(String tableName, String typePrefix) {
     return tableName == null
-        ? String.format("webhookType LIKE '%s%%'", typePrefix)
-        : String.format("%s.webhookType LIKE '%s%%'", tableName, typePrefix);
+        ? String.format("eventConfigType LIKE '%s%%'", typePrefix)
+        : String.format("%s.eventConfigType LIKE '%s%%'", tableName, typePrefix);
   }
 
   private String getCategoryPrefixCondition(String tableName, String category) {

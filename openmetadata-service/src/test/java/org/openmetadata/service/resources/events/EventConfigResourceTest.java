@@ -26,7 +26,13 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.ws.rs.core.Response;
@@ -35,24 +41,23 @@ import org.apache.http.client.HttpResponseException;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
-import org.openmetadata.schema.api.events.CreateWebhook;
+import org.openmetadata.schema.api.events.CreateEventConfig;
 import org.openmetadata.schema.filter.EventFilter;
 import org.openmetadata.schema.filter.Filters;
 import org.openmetadata.schema.type.ChangeDescription;
 import org.openmetadata.schema.type.ChangeEvent;
+import org.openmetadata.schema.type.EventConfig;
+import org.openmetadata.schema.type.EventConfig.Status;
 import org.openmetadata.schema.type.EventType;
 import org.openmetadata.schema.type.FailureDetails;
-import org.openmetadata.schema.type.Webhook;
-import org.openmetadata.schema.type.Webhook.Status;
 import org.openmetadata.service.Entity;
 import org.openmetadata.service.resources.EntityResourceTest;
 import org.openmetadata.service.resources.events.WebhookCallbackResource.EventDetails;
-import org.openmetadata.service.resources.events.WebhookResource.WebhookList;
 import org.openmetadata.service.util.JsonUtils;
 import org.openmetadata.service.util.TestUtils.UpdateType;
 
 @Slf4j
-public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebhook> {
+public class EventConfigResourceTest extends EntityResourceTest<EventConfig, CreateEventConfig> {
   public static final List<EventFilter> ALL_EVENTS_FILTER = new ArrayList<>();
 
   static {
@@ -72,8 +77,8 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
     ALL_EVENTS_FILTER.add(allEntityFilter);
   }
 
-  public WebhookResourceTest() {
-    super(Entity.WEBHOOK, Webhook.class, WebhookList.class, "webhook", "");
+  public EventConfigResourceTest() {
+    super(Entity.EVENT_CONFIG, EventConfig.class, EventConfigResource.EventConfigList.class, "webhook", "");
     supportsAuthorizedMetadataOperations = false;
     supportsPatch = false;
     supportsFieldsQueryParam = false;
@@ -87,11 +92,11 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
     String webhookName = getEntityName(test);
     LOG.info("creating webhook in disabled state");
     String uri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook/" + webhookName;
-    CreateWebhook create =
+    CreateEventConfig create =
         createRequest(webhookName, "", "", null).withEnabled(false).withEndpoint(URI.create(uri)).withBatchSize(10);
-    Webhook webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+    EventConfig webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
     assertEquals(Status.DISABLED, webhook.getStatus());
-    Webhook getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+    EventConfig getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
     assertEquals(Status.DISABLED, getWebhook.getStatus());
     EventDetails details = webhookCallbackResource.getEventDetails(webhookName);
     assertNull(details);
@@ -150,18 +155,17 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
   @Test
   void put_updateEndpointURL(TestInfo test) throws IOException {
     // Create webhook with invalid URL
-    CreateWebhook create =
+    CreateEventConfig create =
         createRequest("counter", "", "", null).withEnabled(true).withEndpoint(URI.create("http://invalidUnknowHost"));
-    Webhook webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+    EventConfig webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
 
     // Wait for webhook to be marked as failed
     Awaitility.await()
         .pollInterval(Duration.ofMillis(100L))
         .atMost(Duration.ofMillis(100 * 100L))
         .untilTrue(hasWebHookFailed(webhook.getId()));
-    Webhook getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+    EventConfig getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
     assertEquals(Status.FAILED, getWebhook.getStatus());
-
     // Get webhook again to reflect the version change (when marked as failed)
     getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
     FailureDetails failureDetails = getWebhook.getFailureDetails();
@@ -173,13 +177,12 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
     fieldUpdated(change, "endPoint", webhook.getEndpoint(), create.getEndpoint());
     fieldUpdated(change, "status", Status.FAILED, Status.ACTIVE);
     fieldDeleted(change, "failureDetails", JsonUtils.pojoToJson(failureDetails));
-
     webhook = updateAndCheckEntity(create, Response.Status.OK, ADMIN_AUTH_HEADERS, UpdateType.MINOR_UPDATE, change);
     deleteEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
   }
 
   private AtomicBoolean hasWebHookFailed(UUID webhookId) throws HttpResponseException {
-    Webhook getWebhook = getEntity(webhookId, ADMIN_AUTH_HEADERS);
+    EventConfig getWebhook = getEntity(webhookId, ADMIN_AUTH_HEADERS);
     LOG.info("webhook status {}", getWebhook.getStatus());
     return new AtomicBoolean(getWebhook.getStatus() == Status.FAILED);
   }
@@ -205,12 +208,12 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
     EventFilter f3 = new EventFilter().withEntityType("all").withFilters(List.of(updateFilter, deleteFilter));
     EventFilter f4 = new EventFilter().withEntityType("all").withFilters(List.of(updateFilter));
 
-    CreateWebhook create =
+    CreateEventConfig create =
         createRequest("filterUpdate", "", "", null)
             .withEnabled(false)
             .withEndpoint(URI.create(endpoint))
             .withEventFilters(List.of(f1));
-    Webhook webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+    EventConfig webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
 
     // Now update the filter to include entity updated and deleted events
     create.setEventFilters(List.of(f2));
@@ -237,9 +240,9 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
   }
 
   @Override
-  public CreateWebhook createRequest(String name) {
+  public CreateEventConfig createRequest(String name) {
     String uri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook/ignore";
-    return new CreateWebhook()
+    return new CreateEventConfig()
         .withName(name)
         .withEventFilters(ALL_EVENTS_FILTER)
         .withEndpoint(URI.create(uri))
@@ -249,19 +252,20 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
   }
 
   @Override
-  public void validateCreatedEntity(Webhook webhook, CreateWebhook createRequest, Map<String, String> authHeaders) {
+  public void validateCreatedEntity(
+      EventConfig webhook, CreateEventConfig createRequest, Map<String, String> authHeaders) {
     assertEquals(createRequest.getName(), webhook.getName());
     List<EventFilter> filters = createRequest.getEventFilters();
     assertEquals(filters, webhook.getEventFilters());
   }
 
   @Override
-  public void compareEntities(Webhook expected, Webhook updated, Map<String, String> authHeaders) {
+  public void compareEntities(EventConfig expected, EventConfig updated, Map<String, String> authHeaders) {
     // Patch not supported
   }
 
   @Override
-  public Webhook validateGetWithDifferentFields(Webhook entity, boolean byName) {
+  public EventConfig validateGetWithDifferentFields(EventConfig entity, boolean byName) {
     return entity; // Nothing to validate
   }
 
@@ -371,12 +375,13 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
     String baseUri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook";
 
     // Create multiple webhooks each with different type of response to callback
-    Webhook w1 = createWebhook("slowServer", baseUri + "/simulate/slowServer"); // Callback response 1 second slower
-    Webhook w2 = createWebhook("callbackTimeout", baseUri + "/simulate/timeout"); // Callback response 12 seconds slower
-    Webhook w3 = createWebhook("callbackResponse300", baseUri + "/simulate/300"); // 3xx response
-    Webhook w4 = createWebhook("callbackResponse400", baseUri + "/simulate/400"); // 4xx response
-    Webhook w5 = createWebhook("callbackResponse500", baseUri + "/simulate/500"); // 5xx response
-    Webhook w6 = createWebhook("invalidEndpoint", "http://invalidUnknownHost"); // Invalid URL
+    EventConfig w1 = createWebhook("slowServer", baseUri + "/simulate/slowServer"); // Callback response 1 second slower
+    EventConfig w2 =
+        createWebhook("callbackTimeout", baseUri + "/simulate/timeout"); // Callback response 12 seconds slower
+    EventConfig w3 = createWebhook("callbackResponse300", baseUri + "/simulate/300"); // 3xx response
+    EventConfig w4 = createWebhook("callbackResponse400", baseUri + "/simulate/400"); // 4xx response
+    EventConfig w5 = createWebhook("callbackResponse500", baseUri + "/simulate/500"); // 5xx response
+    EventConfig w6 = createWebhook("invalidEndpoint", "http://invalidUnknownHost"); // Invalid URL
 
     // Now check state of webhooks created
     EventDetails details = waitForFirstEvent("simulate-slowServer", 25);
@@ -401,25 +406,25 @@ public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebho
     deleteEntity(w6.getId(), ADMIN_AUTH_HEADERS);
   }
 
-  public Webhook createWebhook(String name, String uri) throws IOException {
+  public EventConfig createWebhook(String name, String uri) throws IOException {
     return createWebhook(name, uri, ALL_EVENTS_FILTER);
   }
 
-  public Webhook createWebhook(String name, String uri, List<EventFilter> filters) throws IOException {
-    CreateWebhook createWebhook =
+  public EventConfig createWebhook(String name, String uri, List<EventFilter> filters) throws IOException {
+    CreateEventConfig createWebhook =
         createRequest(name, "", "", null).withEndpoint(URI.create(uri)).withEventFilters(filters).withEnabled(true);
     return createAndCheckEntity(createWebhook, ADMIN_AUTH_HEADERS);
   }
 
   public void assertWebhookStatusSuccess(String name) throws HttpResponseException {
-    Webhook webhook = getEntityByName(name, null, "", ADMIN_AUTH_HEADERS);
+    EventConfig webhook = getEntityByName(name, null, "", ADMIN_AUTH_HEADERS);
     assertEquals(Status.ACTIVE, webhook.getStatus());
     assertNull(webhook.getFailureDetails());
   }
 
   public void assertWebhookStatus(String name, Status status, Integer statusCode, String failedReason)
       throws HttpResponseException {
-    Webhook webhook = getEntityByName(name, null, "", ADMIN_AUTH_HEADERS);
+    EventConfig webhook = getEntityByName(name, null, "", ADMIN_AUTH_HEADERS);
     assertEquals(status, webhook.getStatus());
     assertEquals(statusCode, webhook.getFailureDetails().getLastFailedStatusCode());
     assertEquals(failedReason, webhook.getFailureDetails().getLastFailedReason());

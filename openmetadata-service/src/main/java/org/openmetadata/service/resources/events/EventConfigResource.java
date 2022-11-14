@@ -46,17 +46,16 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.SecurityContext;
 import javax.ws.rs.core.UriInfo;
 import lombok.extern.slf4j.Slf4j;
-import org.openmetadata.schema.api.events.CreateWebhook;
+import org.openmetadata.schema.api.events.CreateEventConfig;
 import org.openmetadata.schema.type.EntityHistory;
+import org.openmetadata.schema.type.EventConfig;
+import org.openmetadata.schema.type.EventConfig.Status;
+import org.openmetadata.schema.type.EventConfigType;
 import org.openmetadata.schema.type.Include;
-import org.openmetadata.schema.type.Webhook;
-import org.openmetadata.schema.type.Webhook.Status;
-import org.openmetadata.schema.type.WebhookType;
 import org.openmetadata.service.OpenMetadataApplicationConfig;
 import org.openmetadata.service.jdbi3.CollectionDAO;
-import org.openmetadata.service.jdbi3.CollectionDAO.WebhookDAO;
+import org.openmetadata.service.jdbi3.EventConfigRepository;
 import org.openmetadata.service.jdbi3.ListFilter;
-import org.openmetadata.service.jdbi3.WebhookRepository;
 import org.openmetadata.service.resources.Collection;
 import org.openmetadata.service.resources.EntityResource;
 import org.openmetadata.service.security.Authorizer;
@@ -69,32 +68,32 @@ import org.openmetadata.service.util.ResultList;
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Collection(name = "webhook")
-public class WebhookResource extends EntityResource<Webhook, WebhookRepository> {
+public class EventConfigResource extends EntityResource<EventConfig, EventConfigRepository> {
   public static final String COLLECTION_PATH = "v1/webhook/";
-  private final WebhookDAO webhookDAO;
+  private final CollectionDAO.EventConfigDAO webhookDAO;
 
   @Override
-  public Webhook addHref(UriInfo uriInfo, Webhook entity) {
+  public EventConfig addHref(UriInfo uriInfo, EventConfig entity) {
     return entity;
   }
 
-  public static class WebhookList extends ResultList<Webhook> {
+  public static class EventConfigList extends ResultList<EventConfig> {
 
     @SuppressWarnings("unused") /* Required for tests */
-    public WebhookList() {}
+    public EventConfigList() {}
   }
 
-  public WebhookResource(CollectionDAO dao, Authorizer authorizer) {
-    super(Webhook.class, new WebhookRepository(dao), authorizer);
-    webhookDAO = dao.webhookDAO();
+  public EventConfigResource(CollectionDAO dao, Authorizer authorizer) {
+    super(EventConfig.class, new EventConfigRepository(dao), authorizer);
+    webhookDAO = dao.eventConfigDAO();
   }
 
   @Override
   public void initialize(OpenMetadataApplicationConfig config) {
     try {
-      List<String> listAllWebhooks = webhookDAO.listAllWebhooks(webhookDAO.getTableName());
-      List<Webhook> webhookList = JsonUtils.readObjects(listAllWebhooks, Webhook.class);
-      webhookList.forEach(dao::addWebhookPublisher);
+      List<String> listAllWebhooks = webhookDAO.listAllEventConfig(webhookDAO.getTableName());
+      List<EventConfig> webhookList = JsonUtils.readObjects(listAllWebhooks, EventConfig.class);
+      webhookList.forEach(dao::addEventPublisher);
     } catch (Exception ex) {
       // Starting application should not fail
       LOG.warn("Exception during initialization", ex);
@@ -111,9 +110,10 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
         @ApiResponse(
             responseCode = "200",
             description = "List of webhooks",
-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = WebhookList.class)))
+            content =
+                @Content(mediaType = "application/json", schema = @Schema(implementation = EventConfigList.class)))
       })
-  public ResultList<Webhook> list(
+  public ResultList<EventConfig> list(
       @Context UriInfo uriInfo,
       @Context SecurityContext securityContext,
       @Parameter(description = "Filter webhooks by status", schema = @Schema(type = "string", example = "active"))
@@ -122,7 +122,7 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
       @Parameter(
               description = "Filter webhooks by type",
               schema = @Schema(type = "string", example = "generic, slack, msteams"))
-          @QueryParam("webhookType")
+          @QueryParam("eventConfigType")
           String typeParam,
       @Parameter(description = "Limit the number webhooks returned. (1 to 1000000, default = " + "10) ")
           @DefaultValue("10")
@@ -144,7 +144,7 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
           Include include)
       throws IOException {
     ListFilter filter =
-        new ListFilter(Include.ALL).addQueryParam("status", statusParam).addQueryParam("webhookType", typeParam);
+        new ListFilter(Include.ALL).addQueryParam("status", statusParam).addQueryParam("eventConfigType", typeParam);
     return listInternal(uriInfo, securityContext, "", filter, limitParam, before, after);
   }
 
@@ -160,10 +160,10 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
         @ApiResponse(
             responseCode = "200",
             description = "Entity events",
-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = EventConfig.class))),
         @ApiResponse(responseCode = "404", description = "Entity for instance {id} is not found")
       })
-  public Webhook get(
+  public EventConfig get(
       @Context UriInfo uriInfo,
       @Context SecurityContext securityContext,
       @Parameter(description = "webhook Id", schema = @Schema(type = "UUID")) @PathParam("id") UUID id,
@@ -188,10 +188,10 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
         @ApiResponse(
             responseCode = "200",
             description = "webhook",
-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = EventConfig.class))),
         @ApiResponse(responseCode = "404", description = "Webhook for instance {id} is not found")
       })
-  public Webhook getByName(
+  public EventConfig getByName(
       @Context UriInfo uriInfo,
       @Context SecurityContext securityContext,
       @Parameter(description = "Name of the webhook", schema = @Schema(type = "string")) @PathParam("name") String name,
@@ -237,12 +237,12 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
         @ApiResponse(
             responseCode = "200",
             description = "webhook",
-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = EventConfig.class))),
         @ApiResponse(
             responseCode = "404",
             description = "Webhook for instance {id} and version {version} is " + "not found")
       })
-  public Webhook getVersion(
+  public EventConfig getVersion(
       @Context UriInfo uriInfo,
       @Context SecurityContext securityContext,
       @Parameter(description = "webhook Id", schema = @Schema(type = "UUID")) @PathParam("id") UUID id,
@@ -265,15 +265,15 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
         @ApiResponse(
             responseCode = "200",
             description = "webhook",
-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = EventConfig.class))),
         @ApiResponse(responseCode = "400", description = "Bad request")
       })
   public Response createWebhook(
-      @Context UriInfo uriInfo, @Context SecurityContext securityContext, @Valid CreateWebhook create)
+      @Context UriInfo uriInfo, @Context SecurityContext securityContext, @Valid CreateEventConfig create)
       throws IOException {
-    Webhook webhook = getWebhook(create, securityContext.getUserPrincipal().getName());
+    EventConfig webhook = getWebhook(create, securityContext.getUserPrincipal().getName());
     Response response = create(uriInfo, securityContext, webhook);
-    dao.addWebhookPublisher(webhook);
+    dao.addEventPublisher(webhook);
     return response;
   }
 
@@ -287,15 +287,15 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
         @ApiResponse(
             responseCode = "200",
             description = "webhook",
-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = EventConfig.class))),
         @ApiResponse(responseCode = "400", description = "Bad request")
       })
   public Response updateWebhook(
-      @Context UriInfo uriInfo, @Context SecurityContext securityContext, @Valid CreateWebhook create)
+      @Context UriInfo uriInfo, @Context SecurityContext securityContext, @Valid CreateEventConfig create)
       throws IOException {
-    Webhook webhook = getWebhook(create, securityContext.getUserPrincipal().getName());
+    EventConfig webhook = getWebhook(create, securityContext.getUserPrincipal().getName());
     Response response = createOrUpdate(uriInfo, securityContext, webhook);
-    dao.updateWebhookPublisher((Webhook) response.getEntity());
+    dao.updateEventPublisher((EventConfig) response.getEntity());
     return response;
   }
 
@@ -323,7 +323,7 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
           JsonPatch patch)
       throws IOException {
     Response response = patchInternal(uriInfo, securityContext, id, patch);
-    dao.updateWebhookPublisher((Webhook) response.getEntity());
+    dao.updateEventPublisher((EventConfig) response.getEntity());
     return response;
   }
 
@@ -339,7 +339,7 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
         @ApiResponse(
             responseCode = "200",
             description = "Entity events",
-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = EventConfig.class))),
         @ApiResponse(responseCode = "404", description = "Entity for instance {id} is not found")
       })
   public Response deleteWebhook(
@@ -348,15 +348,15 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
       @Parameter(description = "webhook Id", schema = @Schema(type = "UUID")) @PathParam("id") UUID id)
       throws IOException, InterruptedException {
     Response response = delete(uriInfo, securityContext, id, false, true);
-    dao.deleteWebhookPublisher(id);
+    dao.deleteEventPublisher(id);
     return response;
   }
 
-  public Webhook getWebhook(CreateWebhook create, String user) throws IOException {
+  public EventConfig getWebhook(CreateEventConfig create, String user) throws IOException {
     // Add filter for soft delete events if delete event type is requested
     //  TODO: What is this for??
     // EntityUtil.addSoftDeleteFilter(create.getEventFilters());
-    return copy(new Webhook(), create, user)
+    return copy(new EventConfig(), create, user)
         .withEndpoint(create.getEndpoint())
         .withEventFilters(create.getEventFilters())
         .withBatchSize(create.getBatchSize())
@@ -364,6 +364,7 @@ public class WebhookResource extends EntityResource<Webhook, WebhookRepository> 
         .withEnabled(create.getEnabled())
         .withSecretKey(create.getSecretKey())
         .withStatus(Boolean.TRUE.equals(create.getEnabled()) ? Status.ACTIVE : Status.DISABLED)
-        .withWebhookType(create.getWebhookType() == null ? WebhookType.generic : create.getWebhookType());
+        .withEventConfigType(
+            create.getEventConfigType() == null ? EventConfigType.generic : create.getEventConfigType());
   }
 }

@@ -15,7 +15,7 @@ import org.openmetadata.service.resources.events.EventResource.ChangeEventList;
 import org.openmetadata.service.util.FilterUtil;
 
 @Slf4j
-public abstract class AbstractEventPublisher implements EventPublisher {
+public abstract class AbstractEventPublisher implements EventPublisherInterface {
   // Backoff timeout in seconds. Delivering events is retried 5 times.
   protected static final int BACKOFF_NORMAL = 0;
   protected static final int BACKOFF_3_SECONDS = 3 * 1000;

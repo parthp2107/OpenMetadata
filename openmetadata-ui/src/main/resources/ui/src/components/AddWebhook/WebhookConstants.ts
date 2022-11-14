@@ -12,7 +12,7 @@
  */
 
 import { startCase } from 'lodash';
-import { EventFilter, Status } from '../../generated/entity/events/webhook';
+import { EventFilter, Status } from '../../generated/entity/events/eventConfig';
 
 export const CREATE_EVENTS_DEFAULT_VALUE = {
   eventType: 'entityCreated',

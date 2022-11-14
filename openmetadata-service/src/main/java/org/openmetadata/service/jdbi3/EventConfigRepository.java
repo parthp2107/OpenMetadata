@@ -26,119 +26,119 @@ import java.util.concurrent.ConcurrentHashMap;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.openmetadata.schema.filter.EventFilter;
-import org.openmetadata.schema.type.Webhook;
-import org.openmetadata.schema.type.Webhook.Status;
-import org.openmetadata.schema.type.WebhookType;
+import org.openmetadata.schema.type.EventConfig;
+import org.openmetadata.schema.type.EventConfigType;
 import org.openmetadata.service.Entity;
 import org.openmetadata.service.events.EventPubSub;
 import org.openmetadata.service.events.EventPubSub.ChangeEventHolder;
-import org.openmetadata.service.events.MSTeamsWebhookPublisher;
-import org.openmetadata.service.events.WebhookPublisher;
-import org.openmetadata.service.resources.events.WebhookResource;
-import org.openmetadata.service.slack.SlackWebhookEventPublisher;
+import org.openmetadata.service.events.EventPublisher;
+import org.openmetadata.service.events.MSTeamsEventPublisher;
+import org.openmetadata.service.resources.events.EventConfigResource;
+import org.openmetadata.service.slack.SlackEventEventPublisher;
 import org.openmetadata.service.util.EntityUtil.Fields;
 
 @Slf4j
-public class WebhookRepository extends EntityRepository<Webhook> {
-  private static final ConcurrentHashMap<UUID, WebhookPublisher> webhookPublisherMap = new ConcurrentHashMap<>();
+public class EventConfigRepository extends EntityRepository<EventConfig> {
+  private static final ConcurrentHashMap<UUID, EventPublisher> eventConfigPublisherMap = new ConcurrentHashMap<>();
 
-  public WebhookRepository(CollectionDAO dao) {
-    super(WebhookResource.COLLECTION_PATH, Entity.WEBHOOK, Webhook.class, dao.webhookDAO(), dao, "", "");
+  public EventConfigRepository(CollectionDAO dao) {
+    super(
+        EventConfigResource.COLLECTION_PATH, Entity.EVENT_CONFIG, EventConfig.class, dao.eventConfigDAO(), dao, "", "");
   }
 
   @Override
-  public Webhook setFields(Webhook entity, Fields fields) {
+  public EventConfig setFields(EventConfig entity, Fields fields) {
     return entity; // No fields to set
   }
 
   @Override
-  public void prepare(Webhook entity) {
+  public void prepare(EventConfig entity) {
     /* Nothing to do */
   }
 
   @Override
-  public void storeEntity(Webhook entity, boolean update) throws IOException {
+  public void storeEntity(EventConfig entity, boolean update) throws IOException {
     entity.setHref(null);
     store(entity, update);
   }
 
   @Override
-  public void storeRelationships(Webhook entity) {
+  public void storeRelationships(EventConfig entity) {
     // No relationship to store
   }
 
   @Override
-  public void restorePatchAttributes(Webhook original, Webhook updated) {
+  public void restorePatchAttributes(EventConfig original, EventConfig updated) {
     updated.withId(original.getId()).withName(original.getName());
   }
 
   @Override
-  public WebhookUpdater getUpdater(Webhook original, Webhook updated, Operation operation) {
-    return new WebhookUpdater(original, updated, operation);
+  public EventConfigUpdater getUpdater(EventConfig original, EventConfig updated, Operation operation) {
+    return new EventConfigUpdater(original, updated, operation);
   }
 
-  private WebhookPublisher getPublisher(UUID id) {
-    return webhookPublisherMap.get(id);
+  private EventPublisher getPublisher(UUID id) {
+    return eventConfigPublisherMap.get(id);
   }
 
-  public void addWebhookPublisher(Webhook webhook) {
-    if (Boolean.FALSE.equals(webhook.getEnabled())) { // Only add webhook that is enabled for publishing events
-      webhook.setStatus(Status.DISABLED);
+  public void addEventPublisher(EventConfig eventConfig) {
+    if (Boolean.FALSE.equals(eventConfig.getEnabled())) { // Only add Event that is enabled for publishing events
+      eventConfig.setStatus(EventConfig.Status.DISABLED);
       return;
     }
 
-    WebhookPublisher publisher;
-    if (webhook.getWebhookType() == WebhookType.slack) {
-      publisher = new SlackWebhookEventPublisher(webhook, daoCollection);
-    } else if (webhook.getWebhookType() == WebhookType.msteams) {
-      publisher = new MSTeamsWebhookPublisher(webhook, daoCollection);
+    EventPublisher publisher;
+    if (eventConfig.getEventConfigType() == EventConfigType.slack) {
+      publisher = new SlackEventEventPublisher(eventConfig, daoCollection);
+    } else if (eventConfig.getEventConfigType() == EventConfigType.msteams) {
+      publisher = new MSTeamsEventPublisher(eventConfig, daoCollection);
     } else {
-      publisher = new WebhookPublisher(webhook, daoCollection);
+      publisher = new EventPublisher(eventConfig, daoCollection);
     }
     BatchEventProcessor<ChangeEventHolder> processor = EventPubSub.addEventHandler(publisher);
     publisher.setProcessor(processor);
-    webhookPublisherMap.put(webhook.getId(), publisher);
-    LOG.info("Webhook publisher subscription started for {}", webhook.getName());
+    eventConfigPublisherMap.put(eventConfig.getId(), publisher);
+    LOG.info("Event publisher subscription started for {}", eventConfig.getName());
   }
 
   @SneakyThrows
-  public void updateWebhookPublisher(Webhook webhook) {
-    if (Boolean.TRUE.equals(webhook.getEnabled())) { // Only add webhook that is enabled for publishing
-      // If there was a previous webhook either in disabled state or stopped due
+  public void updateEventPublisher(EventConfig eventConfig) {
+    if (Boolean.TRUE.equals(eventConfig.getEnabled())) { // Only add Event that is enabled for publishing
+      // If there was a previous Event either in disabled state or stopped due
       // to errors, update it and restart publishing
-      WebhookPublisher previousPublisher = getPublisher(webhook.getId());
+      EventPublisher previousPublisher = getPublisher(eventConfig.getId());
       if (previousPublisher == null) {
-        addWebhookPublisher(webhook);
+        addEventPublisher(eventConfig);
         return;
       }
 
       // Update the existing publisher
-      Status status = previousPublisher.getWebhook().getStatus();
-      previousPublisher.updateWebhook(webhook);
-      if (status != Status.ACTIVE && status != Status.AWAITING_RETRY) {
+      EventConfig.Status status = previousPublisher.getEventConfig().getStatus();
+      previousPublisher.updateEventConfig(eventConfig);
+      if (status != EventConfig.Status.ACTIVE && status != EventConfig.Status.AWAITING_RETRY) {
         // Restart the previously stopped publisher (in states notStarted, error, retryLimitReached)
         BatchEventProcessor<ChangeEventHolder> processor = EventPubSub.addEventHandler(previousPublisher);
         previousPublisher.setProcessor(processor);
-        LOG.info("Webhook publisher restarted for {}", webhook.getName());
+        LOG.info("Event publisher restarted for {}", eventConfig.getName());
       }
     } else {
-      // Remove the webhook publisher
-      deleteWebhookPublisher(webhook.getId());
+      // Remove the Event publisher
+      deleteEventPublisher(eventConfig.getId());
     }
   }
 
-  public void deleteWebhookPublisher(UUID id) throws InterruptedException {
-    WebhookPublisher publisher = webhookPublisherMap.remove(id);
+  public void deleteEventPublisher(UUID id) throws InterruptedException {
+    EventPublisher publisher = eventConfigPublisherMap.remove(id);
     if (publisher != null) {
       publisher.getProcessor().halt();
       publisher.awaitShutdown();
       EventPubSub.removeProcessor(publisher.getProcessor());
-      LOG.info("Webhook publisher deleted for {}", publisher.getWebhook().getName());
+      LOG.info("Event publisher deleted for {}", publisher.getEventConfig().getName());
     }
   }
 
-  public class WebhookUpdater extends EntityUpdater {
-    public WebhookUpdater(Webhook original, Webhook updated, Operation operation) {
+  public class EventConfigUpdater extends EntityUpdater {
+    public EventConfigUpdater(EventConfig original, EventConfig updated, Operation operation) {
       super(original, updated, operation);
     }
 
@@ -152,13 +152,13 @@ public class WebhookRepository extends EntityRepository<Webhook> {
       updateEventFilters();
       if (fieldsChanged()) {
         // If updating the other fields, opportunistically use it to capture failure details
-        WebhookPublisher publisher = WebhookRepository.this.getPublisher(original.getId());
-        if (publisher != null && updated != publisher.getWebhook()) {
+        EventPublisher publisher = EventConfigRepository.this.getPublisher(original.getId());
+        if (publisher != null && updated != publisher.getEventConfig()) {
           updated
-              .withStatus(publisher.getWebhook().getStatus())
-              .withFailureDetails(publisher.getWebhook().getFailureDetails());
+              .withStatus(publisher.getEventConfig().getStatus())
+              .withFailureDetails(publisher.getEventConfig().getFailureDetails());
           if (Boolean.FALSE.equals(updated.getEnabled())) {
-            updated.setStatus(Status.DISABLED);
+            updated.setStatus(EventConfig.Status.DISABLED);
           }
         }
         recordChange(

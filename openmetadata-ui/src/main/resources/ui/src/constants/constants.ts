@@ -12,7 +12,7 @@
  */
 
 import { COOKIE_VERSION } from '../components/Modals/WhatsNewModal/whatsNewData';
-import { WebhookType } from '../generated/api/events/createWebhook';
+import { EventConfigType } from '../generated/api/events/createEventConfig';
 import { getSettingPath } from '../utils/RouterUtils';
 import { getEncodedFqn } from '../utils/StringsUtils';
 import { FQN_SEPARATOR_CHAR } from './char.constants';
@@ -99,7 +99,7 @@ export const PLACEHOLDER_TASK_ID = ':taskId';
 export const PLACEHOLDER_TAG_NAME = ':tagCategoryName';
 export const PLACEHOLDER_SETTING_CATEGORY = ':settingCategory';
 export const PLACEHOLDER_USER_BOT = ':bot';
-export const PLACEHOLDER_WEBHOOK_TYPE = ':webhookType';
+export const PLACEHOLDER_WEBHOOK_TYPE = ':eventConfigType';
 export const PLACEHOLDER_RULE_NAME = ':ruleName';
 export const PLACEHOLDER_DASHBOARD_TYPE = ':dashboardType';
 export const PLACEHOLDER_TEST_SUITE_FQN = ':testSuiteFQN';
@@ -359,7 +359,7 @@ export const getDatabaseSchemaDetailsPath = (
   return path;
 };
 
-export const getAddWebhookPath = (webhookType?: WebhookType) => {
+export const getAddWebhookPath = (webhookType?: EventConfigType) => {
   let path = webhookType ? ROUTES.ADD_WEBHOOK_WITH_TYPE : ROUTES.ADD_WEBHOOK;
   if (webhookType) {
     path = path.replace(PLACEHOLDER_WEBHOOK_TYPE, webhookType);

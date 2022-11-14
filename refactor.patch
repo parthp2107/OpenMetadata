@@ -1,0 +1,3029 @@
+diff --git a/bootstrap/sql/com.mysql.cj.jdbc.Driver/v005__create_db_connection_info.sql b/bootstrap/sql/com.mysql.cj.jdbc.Driver/v005__create_db_connection_info.sql
+index ac824903c..26b30a8fe 100644
+--- a/bootstrap/sql/com.mysql.cj.jdbc.Driver/v005__create_db_connection_info.sql
++++ b/bootstrap/sql/com.mysql.cj.jdbc.Driver/v005__create_db_connection_info.sql
+@@ -302,4 +302,17 @@ SET JSON = JSON_INSERT(
+ 		'$.connection.config.type','GluePipeline',
+ 		'$.serviceType','GluePipeline'
+ 	)
+-where serviceType='Glue';
+\ No newline at end of file
++where serviceType='Glue';
++
++DROP TABLE webhook_entity;
++
++CREATE TABLE IF NOT EXISTS event_configuration (
++    id VARCHAR(36) GENERATED ALWAYS AS (json ->> '$.id') STORED NOT NULL,
++    name VARCHAR(256) GENERATED ALWAYS AS (json ->> '$.name') NOT NULL,
++    json JSON NOT NULL,
++    status VARCHAR(256) GENERATED ALWAYS AS (json ->> '$.status') NOT NULL,
++    eventConfigType VARCHAR(36) GENERATED ALWAYS AS (json ->> '$.eventConfigType') NOT NULL,
++    PRIMARY KEY (id),
++    UNIQUE (name)
++    -- No versioning, updatedAt, updatedBy, or changeDescription fields for eventConfig
++);
+diff --git a/bootstrap/sql/org.postgresql.Driver/v005__create_db_connection_info.sql b/bootstrap/sql/org.postgresql.Driver/v005__create_db_connection_info.sql
+index f08bf0967..2dc4736a3 100644
+--- a/bootstrap/sql/org.postgresql.Driver/v005__create_db_connection_info.sql
++++ b/bootstrap/sql/org.postgresql.Driver/v005__create_db_connection_info.sql
+@@ -344,4 +344,17 @@ SET json = jsonb_set(
+       '"GluePipeline"',
+       true
+   )
+-WHERE serviceType = 'Glue';
+\ No newline at end of file
++WHERE serviceType = 'Glue';
++
++DROP TABLE webhook_entity;
++
++CREATE TABLE IF NOT EXISTS event_configuration (
++    id VARCHAR(36) GENERATED ALWAYS AS (json ->> 'id') STORED NOT NULL,
++    name VARCHAR(256) GENERATED ALWAYS AS (json ->> 'name') STORED NOT NULL,
++    json JSON NOT NULL,
++    status VARCHAR(256) GENERATED ALWAYS AS (json ->> 'status') STORED NOT NULL,
++    eventConfigType VARCHAR(36) GENERATED ALWAYS AS (json ->> 'eventConfigType') STORED NOT NULL,
++    PRIMARY KEY (id),
++    UNIQUE (name)
++    -- No versioning, updatedAt, updatedBy, or changeDescription fields for eventConfig
++);
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/Entity.java b/openmetadata-service/src/main/java/org/openmetadata/service/Entity.java
+index 7507574f6..8229d3a43 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/Entity.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/Entity.java
+@@ -121,6 +121,7 @@ public final class Entity {
+   //
+   public static final String INGESTION_PIPELINE = "ingestionPipeline";
+   public static final String WEBHOOK = "webhook";
++  public static final String EVENT_CONFIG = "eventConfig";
+ 
+   //
+   // Reserved names in OpenMetadata
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/elasticsearch/ElasticSearchEventPublisher.java b/openmetadata-service/src/main/java/org/openmetadata/service/elasticsearch/ElasticSearchEventPublisher.java
+index eba19f0eb..a704363aa 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/elasticsearch/ElasticSearchEventPublisher.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/elasticsearch/ElasticSearchEventPublisher.java
+@@ -73,13 +73,14 @@ import org.openmetadata.schema.settings.FailureDetails;
+ import org.openmetadata.schema.type.ChangeDescription;
+ import org.openmetadata.schema.type.ChangeEvent;
+ import org.openmetadata.schema.type.EntityReference;
++import org.openmetadata.schema.type.EventConfig;
+ import org.openmetadata.schema.type.EventType;
+ import org.openmetadata.schema.type.FieldChange;
+ import org.openmetadata.schema.type.TagCategory;
+ import org.openmetadata.schema.type.UsageDetails;
+ import org.openmetadata.service.Entity;
+ import org.openmetadata.service.elasticsearch.ElasticSearchIndexDefinition.ElasticSearchIndexType;
+-import org.openmetadata.service.events.AbstractEventPublisher;
++import org.openmetadata.service.events.EventPublisher;
+ import org.openmetadata.service.events.errors.EventPublisherException;
+ import org.openmetadata.service.jdbi3.CollectionDAO;
+ import org.openmetadata.service.resources.elasticsearch.BuildSearchIndexResource;
+@@ -88,7 +89,7 @@ import org.openmetadata.service.util.ElasticSearchClientUtils;
+ import org.openmetadata.service.util.JsonUtils;
+ 
+ @Slf4j
+-public class ElasticSearchEventPublisher extends AbstractEventPublisher {
++public class ElasticSearchEventPublisher extends EventPublisher {
+   private static final String SENDING_REQUEST_TO_ELASTIC_SEARCH = "Sending request to ElasticSearch {}";
+   private final RestHighLevelClient client;
+   private final ElasticSearchIndexDefinition esIndexDefinition;
+@@ -96,8 +97,19 @@ public class ElasticSearchEventPublisher extends AbstractEventPublisher {
+   private static final String SERVICE_NAME = "service.name";
+   private static final String DATABASE_NAME = "database.name";
+ 
++  // Do not use
++  public ElasticSearchEventPublisher(EventConfig eventConfig, CollectionDAO dao) {
++    super(eventConfig, dao);
++    this.dao = dao;
++    // needs Db connection
++    registerElasticSearchJobs();
++    this.client = ElasticSearchClientUtils.createElasticSearchClient(eventConfig.getElasticSearchConfig());
++    esIndexDefinition = new ElasticSearchIndexDefinition(client, dao);
++    esIndexDefinition.createIndexes();
++  }
++
+   public ElasticSearchEventPublisher(ElasticSearchConfiguration esConfig, CollectionDAO dao) {
+-    super(esConfig.getBatchSize(), new ArrayList<>());
++    super(new EventConfig().withBatchSize(esConfig.getBatchSize()).withEventFilters(new ArrayList<>()), dao);
+     this.dao = dao;
+     // needs Db connection
+     registerElasticSearchJobs();
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/events/AbstractEventPublisher.java b/openmetadata-service/src/main/java/org/openmetadata/service/events/AbstractEventPublisher.java
+index aa781a17f..08ceb969c 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/events/AbstractEventPublisher.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/events/AbstractEventPublisher.java
+@@ -15,7 +15,7 @@ import org.openmetadata.service.resources.events.EventResource.ChangeEventList;
+ import org.openmetadata.service.util.FilterUtil;
+ 
+ @Slf4j
+-public abstract class AbstractEventPublisher implements EventPublisher {
++public abstract class AbstractEventPublisher implements EventPublisherInterface {
+   // Backoff timeout in seconds. Delivering events is retried 5 times.
+   protected static final int BACKOFF_NORMAL = 0;
+   protected static final int BACKOFF_3_SECONDS = 3 * 1000;
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/events/EventPublisher.java b/openmetadata-service/src/main/java/org/openmetadata/service/events/EventPublisher.java
+index c3185eb24..6b67decf2 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/events/EventPublisher.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/events/EventPublisher.java
+@@ -1,10 +1,214 @@
++/*
++ *  Copyright 2021 Collate
++ *  Licensed under the Apache License, Version 2.0 (the "License");
++ *  you may not use this file except in compliance with the License.
++ *  You may obtain a copy of the License at
++ *  http://www.apache.org/licenses/LICENSE-2.0
++ *  Unless required by applicable law or agreed to in writing, software
++ *  distributed under the License is distributed on an "AS IS" BASIS,
++ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ *  See the License for the specific language governing permissions and
++ *  limitations under the License.
++ */
+ package org.openmetadata.service.events;
+ 
+-import com.lmax.disruptor.EventHandler;
+-import com.lmax.disruptor.LifecycleAware;
+-import org.openmetadata.service.resources.events.EventResource.ChangeEventList;
++import com.lmax.disruptor.BatchEventProcessor;
++import java.io.IOException;
++import java.net.UnknownHostException;
++import java.util.Map;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
++import javax.ws.rs.client.Client;
++import javax.ws.rs.client.ClientBuilder;
++import javax.ws.rs.client.Invocation;
++import javax.ws.rs.core.Response;
++import lombok.extern.slf4j.Slf4j;
++import org.openmetadata.common.utils.CommonUtil;
++import org.openmetadata.schema.type.EventConfig;
++import org.openmetadata.schema.type.FailureDetails;
++import org.openmetadata.service.events.errors.EventPublisherException;
++import org.openmetadata.service.jdbi3.CollectionDAO;
++import org.openmetadata.service.jdbi3.EntityRepository;
++import org.openmetadata.service.jdbi3.EventConfigRepository;
++import org.openmetadata.service.jdbi3.EventConfigRepository.EventConfigUpdater;
++import org.openmetadata.service.resources.events.EventResource;
++import org.openmetadata.service.security.SecurityUtil;
++import org.openmetadata.service.util.JsonUtils;
++import org.openmetadata.service.util.RestUtil;
+ 
+-public interface EventPublisher extends EventHandler<EventPubSub.ChangeEventHolder>, LifecycleAware {
++/**
++ * EventPublisher publishes events to the eventConfig endpoint using POST http requests. There is one instance of
++ * EventPublisher per eventConfig subscription. Each EventPublisher is an EventHandler that runs in a separate thread
++ * and receives events from LMAX Disruptor {@link EventPubSub} through {@link BatchEventProcessor}.
++ *
++ * <p>The failures during callback to EventConfig endpoints are handled in this class as follows:
++ *
++ * <ul>
++ *   <li>EventConfig with unresolvable URLs are marked as "failed" and no further attempt is made to deliver the events
++ *   <li>EventConfig callbacks that return 3xx are marked as "failed" and no further attempt is made to deliver the
++ *       events
++ *   <li>EventConfig callbacks that return 4xx, 5xx, or timeout are marked as "awaitingRetry" and 5 retry attempts are
++ *       made to deliver the events with the following backoff - 3 seconds, 30 seconds, 5 minutes, 1 hours, and 24 hour.
++ *       When all the 5 delivery attempts fail, the eventConfig state is marked as "retryLimitReached" and no further
++ *       attempt is made to deliver the events.
++ * </ul>
++ */
++@Slf4j
++public class EventPublisher extends AbstractEventPublisher {
++  private final CountDownLatch shutdownLatch = new CountDownLatch(1);
++  private final EventConfig eventConfig;
++  private BatchEventProcessor<EventPubSub.ChangeEventHolder> processor;
++  private Client client;
++  private final CollectionDAO daoCollection;
+ 
+-  void publish(ChangeEventList events) throws Exception;
++  private final EventConfigRepository eventConfigRepository;
++
++  public EventPublisher(EventConfig eventConfig, CollectionDAO dao) {
++    super(eventConfig.getBatchSize(), eventConfig.getEventFilters());
++    this.eventConfig = eventConfig;
++    this.daoCollection = dao;
++    this.eventConfigRepository = new EventConfigRepository(dao);
++  }
++
++  @Override
++  public void onStart() {
++    createClient();
++    eventConfig.withFailureDetails(new FailureDetails());
++    LOG.info("Webhook-lifecycle-onStart {}", eventConfig.getName());
++  }
++
++  @Override
++  public void onShutdown() {
++    currentBackoffTime = BACKOFF_NORMAL;
++    client.close();
++    client = null;
++    shutdownLatch.countDown();
++    LOG.info("Webhook-lifecycle-onShutdown {}", eventConfig.getName());
++  }
++
++  public synchronized EventConfig getEventConfig() {
++    return eventConfig;
++  }
++
++  public synchronized void updateEventConfig(EventConfig updatedEventConfig) {
++    currentBackoffTime = BACKOFF_NORMAL;
++    eventConfig.setDescription(updatedEventConfig.getDescription());
++    eventConfig.setTimeout(updatedEventConfig.getTimeout());
++    eventConfig.setBatchSize(updatedEventConfig.getBatchSize());
++    eventConfig.setEndpoint(updatedEventConfig.getEndpoint());
++    eventConfig.setEventFilters(updatedEventConfig.getEventFilters());
++    updateFilter();
++    createClient();
++  }
++
++  private void updateFilter() {
++    filter.clear();
++    updateFilter(eventConfig.getEventFilters());
++  }
++
++  private void setErrorStatus(Long attemptTime, Integer statusCode, String reason)
++      throws IOException, InterruptedException {
++    if (!attemptTime.equals(eventConfig.getFailureDetails().getLastFailedAt())) {
++      setStatus(EventConfig.Status.FAILED, attemptTime, statusCode, reason, null);
++    }
++    eventConfigRepository.deleteEventPublisher(eventConfig.getId());
++    throw new RuntimeException(reason);
++  }
++
++  private void setAwaitingRetry(Long attemptTime, int statusCode, String reason) throws IOException {
++    if (!attemptTime.equals(eventConfig.getFailureDetails().getLastFailedAt())) {
++      setStatus(EventConfig.Status.AWAITING_RETRY, attemptTime, statusCode, reason, attemptTime + currentBackoffTime);
++    }
++  }
++
++  private void setStatus(EventConfig.Status status, Long attemptTime, Integer statusCode, String reason, Long timestamp)
++      throws IOException {
++    EventConfig stored = daoCollection.eventConfigDAO().findEntityById(eventConfig.getId());
++    eventConfig.setStatus(status);
++    eventConfig
++        .getFailureDetails()
++        .withLastFailedAt(attemptTime)
++        .withLastFailedStatusCode(statusCode)
++        .withLastFailedReason(reason)
++        .withNextAttempt(timestamp);
++
++    // TODO: Fix this
++    EventConfigUpdater updater = eventConfigRepository.getUpdater(stored, eventConfig, EntityRepository.Operation.PUT);
++    updater.update();
++  }
++
++  private synchronized void createClient() {
++    if (client != null) {
++      client.close();
++      client = null;
++    }
++    ClientBuilder clientBuilder = ClientBuilder.newBuilder();
++    clientBuilder.connectTimeout(10, TimeUnit.SECONDS);
++    clientBuilder.readTimeout(12, TimeUnit.SECONDS);
++    client = clientBuilder.build();
++  }
++
++  public void awaitShutdown() throws InterruptedException {
++    LOG.info("Awaiting shutdown webhook-lifecycle {}", eventConfig.getName());
++    shutdownLatch.await(5, TimeUnit.SECONDS);
++  }
++
++  public void setProcessor(BatchEventProcessor<EventPubSub.ChangeEventHolder> processor) {
++    this.processor = processor;
++  }
++
++  public BatchEventProcessor<EventPubSub.ChangeEventHolder> getProcessor() {
++    return processor;
++  }
++
++  private Invocation.Builder getTarget() {
++    Map<String, String> authHeaders = SecurityUtil.authHeaders("admin@open-metadata.org");
++    return SecurityUtil.addHeaders(client.target(eventConfig.getEndpoint()), authHeaders);
++  }
++
++  @Override
++  public void publish(EventResource.ChangeEventList list)
++      throws EventPublisherException, IOException, InterruptedException {
++    long attemptTime = System.currentTimeMillis();
++    try {
++      String json = JsonUtils.pojoToJson(list);
++      Response response;
++      if (eventConfig.getSecretKey() != null && !eventConfig.getSecretKey().isEmpty()) {
++        String hmac = "sha256=" + CommonUtil.calculateHMAC(eventConfig.getSecretKey(), json);
++        response = getTarget().header(RestUtil.SIGNATURE_HEADER, hmac).post(javax.ws.rs.client.Entity.json(json));
++      } else {
++        response = getTarget().post(javax.ws.rs.client.Entity.json(json));
++      }
++      LOG.info(
++          "Webhook {}:{}:{} received response {}",
++          eventConfig.getName(),
++          eventConfig.getStatus(),
++          batch.size(),
++          response.getStatusInfo());
++      // 2xx response means call back is successful
++      if (response.getStatus() >= 200 && response.getStatus() < 300) { // All 2xx responses
++        eventConfig.getFailureDetails().setLastSuccessfulAt(batch.get(batch.size() - 1).getTimestamp());
++        batch.clear();
++        if (eventConfig.getStatus() != EventConfig.Status.ACTIVE) {
++          setStatus(EventConfig.Status.ACTIVE, null, null, null, null);
++        }
++      } else if (response.getStatus() >= 300 && response.getStatus() < 400) {
++        // 3xx response/redirection is not allowed for callback. Set the webhook state as in error
++        setErrorStatus(attemptTime, response.getStatus(), response.getStatusInfo().getReasonPhrase());
++      } else if (response.getStatus() >= 300 && response.getStatus() < 600) {
++        // 4xx, 5xx response retry delivering events after timeout
++        setNextBackOff();
++        setAwaitingRetry(attemptTime, response.getStatus(), response.getStatusInfo().getReasonPhrase());
++        Thread.sleep(currentBackoffTime);
++      }
++    } catch (Exception ex) {
++      Throwable cause = ex.getCause();
++      if (cause != null && cause.getClass() == UnknownHostException.class) {
++        LOG.warn("Invalid webhook {} endpoint {}", eventConfig.getName(), eventConfig.getEndpoint());
++        setErrorStatus(attemptTime, null, "UnknownHostException");
++      } else {
++        LOG.debug("Exception occurred while publishing webhook", ex);
++      }
++    }
++  }
+ }
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/events/MSTeamsWebhookPublisher.java b/openmetadata-service/src/main/java/org/openmetadata/service/events/MSTeamsWebhookPublisher.java
+deleted file mode 100644
+index 221f581a2..000000000
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/events/MSTeamsWebhookPublisher.java
++++ /dev/null
+@@ -1,64 +0,0 @@
+-package org.openmetadata.service.events;
+-
+-import java.util.concurrent.TimeUnit;
+-import javax.ws.rs.client.Client;
+-import javax.ws.rs.client.ClientBuilder;
+-import javax.ws.rs.client.Invocation;
+-import javax.ws.rs.core.MediaType;
+-import javax.ws.rs.core.Response;
+-import lombok.extern.slf4j.Slf4j;
+-import org.openmetadata.schema.type.ChangeEvent;
+-import org.openmetadata.schema.type.Webhook;
+-import org.openmetadata.service.events.errors.EventPublisherException;
+-import org.openmetadata.service.jdbi3.CollectionDAO;
+-import org.openmetadata.service.resources.events.EventResource;
+-import org.openmetadata.service.slack.SlackRetriableException;
+-import org.openmetadata.service.slack.TeamsMessage;
+-import org.openmetadata.service.util.ChangeEventParser;
+-
+-@Slf4j
+-public class MSTeamsWebhookPublisher extends WebhookPublisher {
+-  private final Invocation.Builder target;
+-  private final Client client;
+-
+-  public MSTeamsWebhookPublisher(Webhook webhook, CollectionDAO dao) {
+-    super(webhook, dao);
+-    String msTeamsWebhookURL = webhook.getEndpoint().toString();
+-    ClientBuilder clientBuilder = ClientBuilder.newBuilder();
+-    clientBuilder.connectTimeout(webhook.getTimeout(), TimeUnit.SECONDS);
+-    clientBuilder.readTimeout(webhook.getReadTimeout(), TimeUnit.SECONDS);
+-    client = clientBuilder.build();
+-    target = client.target(msTeamsWebhookURL).request();
+-  }
+-
+-  @Override
+-  public void onStart() {
+-    LOG.info("Slack Webhook Publisher Started");
+-  }
+-
+-  @Override
+-  public void onShutdown() {
+-    if (client != null) {
+-      client.close();
+-    }
+-  }
+-
+-  @Override
+-  public void publish(EventResource.ChangeEventList events) throws EventPublisherException {
+-    for (ChangeEvent event : events.getData()) {
+-      try {
+-        TeamsMessage teamsMessage = ChangeEventParser.buildTeamsMessage(event);
+-        Response response =
+-            target.post(javax.ws.rs.client.Entity.entity(teamsMessage, MediaType.APPLICATION_JSON_TYPE));
+-        if (response.getStatus() >= 300 && response.getStatus() < 400) {
+-          throw new EventPublisherException(
+-              "Slack webhook callback is getting redirected. " + "Please check your configuration");
+-        } else if (response.getStatus() >= 300 && response.getStatus() < 600) {
+-          throw new SlackRetriableException(response.getStatusInfo().getReasonPhrase());
+-        }
+-      } catch (Exception e) {
+-        LOG.error("Failed to publish event {} to slack due to {} ", event, e.getMessage());
+-      }
+-    }
+-  }
+-}
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/events/WebhookPublisher.java b/openmetadata-service/src/main/java/org/openmetadata/service/events/WebhookPublisher.java
+deleted file mode 100644
+index e96178ab9..000000000
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/events/WebhookPublisher.java
++++ /dev/null
+@@ -1,214 +0,0 @@
+-/*
+- *  Copyright 2021 Collate
+- *  Licensed under the Apache License, Version 2.0 (the "License");
+- *  you may not use this file except in compliance with the License.
+- *  You may obtain a copy of the License at
+- *  http://www.apache.org/licenses/LICENSE-2.0
+- *  Unless required by applicable law or agreed to in writing, software
+- *  distributed under the License is distributed on an "AS IS" BASIS,
+- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- *  See the License for the specific language governing permissions and
+- *  limitations under the License.
+- */
+-
+-package org.openmetadata.service.events;
+-
+-import com.lmax.disruptor.BatchEventProcessor;
+-import java.io.IOException;
+-import java.net.UnknownHostException;
+-import java.util.Map;
+-import java.util.concurrent.CountDownLatch;
+-import java.util.concurrent.TimeUnit;
+-import javax.ws.rs.client.Client;
+-import javax.ws.rs.client.ClientBuilder;
+-import javax.ws.rs.client.Invocation;
+-import javax.ws.rs.core.Response;
+-import lombok.extern.slf4j.Slf4j;
+-import org.openmetadata.common.utils.CommonUtil;
+-import org.openmetadata.schema.type.FailureDetails;
+-import org.openmetadata.schema.type.Webhook;
+-import org.openmetadata.service.events.errors.EventPublisherException;
+-import org.openmetadata.service.jdbi3.CollectionDAO;
+-import org.openmetadata.service.jdbi3.EntityRepository;
+-import org.openmetadata.service.jdbi3.WebhookRepository;
+-import org.openmetadata.service.jdbi3.WebhookRepository.WebhookUpdater;
+-import org.openmetadata.service.resources.events.EventResource;
+-import org.openmetadata.service.security.SecurityUtil;
+-import org.openmetadata.service.util.JsonUtils;
+-import org.openmetadata.service.util.RestUtil;
+-
+-/**
+- * WebhookPublisher publishes events to the webhook endpoint using POST http requests. There is one instance of
+- * WebhookPublisher per webhook subscription. Each WebhookPublish is an EventHandler that runs in a separate thread and
+- * receives events from LMAX Disruptor {@link EventPubSub} through {@link BatchEventProcessor}.
+- *
+- * <p>The failures during callback to Webhook endpoints are handled in this class as follows:
+- *
+- * <ul>
+- *   <li>Webhook with unresolvable URLs are marked as "failed" and no further attempt is made to deliver the events
+- *   <li>Webhook callbacks that return 3xx are marked as "failed" and no further attempt is made to deliver the events
+- *   <li>Webhook callbacks that return 4xx, 5xx, or timeout are marked as "awaitingRetry" and 5 retry attempts are made
+- *       to deliver the events with the following backoff - 3 seconds, 30 seconds, 5 minutes, 1 hours, and 24 hour. When
+- *       all the 5 delivery attempts fail, the webhook state is marked as "retryLimitReached" and no further attempt is
+- *       made to deliver the events.
+- * </ul>
+- */
+-@Slf4j
+-public class WebhookPublisher extends AbstractEventPublisher {
+-  private final CountDownLatch shutdownLatch = new CountDownLatch(1);
+-  private final Webhook webhook;
+-  private BatchEventProcessor<EventPubSub.ChangeEventHolder> processor;
+-  private Client client;
+-  private final CollectionDAO daoCollection;
+-
+-  private final WebhookRepository webhookRepository;
+-
+-  public WebhookPublisher(Webhook webhook, CollectionDAO dao) {
+-    super(webhook.getBatchSize(), webhook.getEventFilters());
+-    this.webhook = webhook;
+-    this.daoCollection = dao;
+-    this.webhookRepository = new WebhookRepository(dao);
+-  }
+-
+-  @Override
+-  public void onStart() {
+-    createClient();
+-    webhook.withFailureDetails(new FailureDetails());
+-    LOG.info("Webhook-lifecycle-onStart {}", webhook.getName());
+-  }
+-
+-  @Override
+-  public void onShutdown() {
+-    currentBackoffTime = BACKOFF_NORMAL;
+-    client.close();
+-    client = null;
+-    shutdownLatch.countDown();
+-    LOG.info("Webhook-lifecycle-onShutdown {}", webhook.getName());
+-  }
+-
+-  public synchronized Webhook getWebhook() {
+-    return webhook;
+-  }
+-
+-  public synchronized void updateWebhook(Webhook updatedWebhook) {
+-    currentBackoffTime = BACKOFF_NORMAL;
+-    webhook.setDescription(updatedWebhook.getDescription());
+-    webhook.setTimeout(updatedWebhook.getTimeout());
+-    webhook.setBatchSize(updatedWebhook.getBatchSize());
+-    webhook.setEndpoint(updatedWebhook.getEndpoint());
+-    webhook.setEventFilters(updatedWebhook.getEventFilters());
+-    updateFilter();
+-    createClient();
+-  }
+-
+-  private void updateFilter() {
+-    filter.clear();
+-    updateFilter(webhook.getEventFilters());
+-  }
+-
+-  private void setErrorStatus(Long attemptTime, Integer statusCode, String reason)
+-      throws IOException, InterruptedException {
+-    if (!attemptTime.equals(webhook.getFailureDetails().getLastFailedAt())) {
+-      setStatus(Webhook.Status.FAILED, attemptTime, statusCode, reason, null);
+-    }
+-    webhookRepository.deleteWebhookPublisher(webhook.getId());
+-    throw new RuntimeException(reason);
+-  }
+-
+-  private void setAwaitingRetry(Long attemptTime, int statusCode, String reason) throws IOException {
+-    if (!attemptTime.equals(webhook.getFailureDetails().getLastFailedAt())) {
+-      setStatus(Webhook.Status.AWAITING_RETRY, attemptTime, statusCode, reason, attemptTime + currentBackoffTime);
+-    }
+-  }
+-
+-  private void setStatus(Webhook.Status status, Long attemptTime, Integer statusCode, String reason, Long timestamp)
+-      throws IOException {
+-    Webhook stored = daoCollection.webhookDAO().findEntityById(webhook.getId());
+-    webhook.setStatus(status);
+-    webhook
+-        .getFailureDetails()
+-        .withLastFailedAt(attemptTime)
+-        .withLastFailedStatusCode(statusCode)
+-        .withLastFailedReason(reason)
+-        .withNextAttempt(timestamp);
+-
+-    // TODO: Fix this
+-    WebhookUpdater updater = webhookRepository.getUpdater(stored, webhook, EntityRepository.Operation.PUT);
+-    updater.update();
+-  }
+-
+-  private synchronized void createClient() {
+-    if (client != null) {
+-      client.close();
+-      client = null;
+-    }
+-    ClientBuilder clientBuilder = ClientBuilder.newBuilder();
+-    clientBuilder.connectTimeout(10, TimeUnit.SECONDS);
+-    clientBuilder.readTimeout(12, TimeUnit.SECONDS);
+-    client = clientBuilder.build();
+-  }
+-
+-  public void awaitShutdown() throws InterruptedException {
+-    LOG.info("Awaiting shutdown webhook-lifecycle {}", webhook.getName());
+-    shutdownLatch.await(5, TimeUnit.SECONDS);
+-  }
+-
+-  public void setProcessor(BatchEventProcessor<EventPubSub.ChangeEventHolder> processor) {
+-    this.processor = processor;
+-  }
+-
+-  public BatchEventProcessor<EventPubSub.ChangeEventHolder> getProcessor() {
+-    return processor;
+-  }
+-
+-  private Invocation.Builder getTarget() {
+-    Map<String, String> authHeaders = SecurityUtil.authHeaders("admin@open-metadata.org");
+-    return SecurityUtil.addHeaders(client.target(webhook.getEndpoint()), authHeaders);
+-  }
+-
+-  @Override
+-  public void publish(EventResource.ChangeEventList list)
+-      throws EventPublisherException, IOException, InterruptedException {
+-    long attemptTime = System.currentTimeMillis();
+-    try {
+-      String json = JsonUtils.pojoToJson(list);
+-      Response response;
+-      if (webhook.getSecretKey() != null && !webhook.getSecretKey().isEmpty()) {
+-        String hmac = "sha256=" + CommonUtil.calculateHMAC(webhook.getSecretKey(), json);
+-        response = getTarget().header(RestUtil.SIGNATURE_HEADER, hmac).post(javax.ws.rs.client.Entity.json(json));
+-      } else {
+-        response = getTarget().post(javax.ws.rs.client.Entity.json(json));
+-      }
+-      LOG.info(
+-          "Webhook {}:{}:{} received response {}",
+-          webhook.getName(),
+-          webhook.getStatus(),
+-          batch.size(),
+-          response.getStatusInfo());
+-      // 2xx response means call back is successful
+-      if (response.getStatus() >= 200 && response.getStatus() < 300) { // All 2xx responses
+-        webhook.getFailureDetails().setLastSuccessfulAt(batch.get(batch.size() - 1).getTimestamp());
+-        batch.clear();
+-        if (webhook.getStatus() != Webhook.Status.ACTIVE) {
+-          setStatus(Webhook.Status.ACTIVE, null, null, null, null);
+-        }
+-      } else if (response.getStatus() >= 300 && response.getStatus() < 400) {
+-        // 3xx response/redirection is not allowed for callback. Set the webhook state as in error
+-        setErrorStatus(attemptTime, response.getStatus(), response.getStatusInfo().getReasonPhrase());
+-      } else if (response.getStatus() >= 300 && response.getStatus() < 600) {
+-        // 4xx, 5xx response retry delivering events after timeout
+-        setNextBackOff();
+-        setAwaitingRetry(attemptTime, response.getStatus(), response.getStatusInfo().getReasonPhrase());
+-        Thread.sleep(currentBackoffTime);
+-      }
+-    } catch (Exception ex) {
+-      Throwable cause = ex.getCause();
+-      if (cause != null && cause.getClass() == UnknownHostException.class) {
+-        LOG.warn("Invalid webhook {} endpoint {}", webhook.getName(), webhook.getEndpoint());
+-        setErrorStatus(attemptTime, null, "UnknownHostException");
+-      } else {
+-        LOG.debug("Exception occurred while publishing webhook", ex);
+-      }
+-    }
+-  }
+-}
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/CollectionDAO.java b/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/CollectionDAO.java
+index a97f1288b..f4f08f058 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/CollectionDAO.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/CollectionDAO.java
+@@ -87,6 +87,7 @@ import org.openmetadata.schema.settings.SettingsType;
+ import org.openmetadata.schema.tests.TestCase;
+ import org.openmetadata.schema.tests.TestDefinition;
+ import org.openmetadata.schema.tests.TestSuite;
++import org.openmetadata.schema.type.EventConfig;
+ import org.openmetadata.schema.type.Relationship;
+ import org.openmetadata.schema.type.TagCategory;
+ import org.openmetadata.schema.type.TagLabel;
+@@ -94,7 +95,6 @@ import org.openmetadata.schema.type.TaskStatus;
+ import org.openmetadata.schema.type.ThreadType;
+ import org.openmetadata.schema.type.UsageDetails;
+ import org.openmetadata.schema.type.UsageStats;
+-import org.openmetadata.schema.type.Webhook;
+ import org.openmetadata.schema.util.EntitiesCount;
+ import org.openmetadata.schema.util.ServicesCount;
+ import org.openmetadata.service.Entity;
+@@ -218,7 +218,7 @@ public interface CollectionDAO {
+   ChangeEventDAO changeEventDAO();
+ 
+   @CreateSqlObject
+-  WebhookDAO webhookDAO();
++  EventConfigDAO eventConfigDAO();
+ 
+   @CreateSqlObject
+   TypeEntityDAO typeEntityDAO();
+@@ -1793,15 +1793,15 @@ public interface CollectionDAO {
+     }
+   }
+ 
+-  interface WebhookDAO extends EntityDAO<Webhook> {
++  interface EventConfigDAO extends EntityDAO<EventConfig> {
+     @Override
+     default String getTableName() {
+-      return "webhook_entity";
++      return "event_configuration";
+     }
+ 
+     @Override
+-    default Class<Webhook> getEntityClass() {
+-      return Webhook.class;
++    default Class<EventConfig> getEntityClass() {
++      return EventConfig.class;
+     }
+ 
+     @Override
+@@ -1815,7 +1815,7 @@ public interface CollectionDAO {
+     }
+ 
+     @SqlQuery("SELECT json FROM <table>")
+-    List<String> listAllWebhooks(@Define("table") String table);
++    List<String> listAllEventConfig(@Define("table") String table);
+   }
+ 
+   interface TagCategoryDAO extends EntityDAO<TagCategory> {
+@@ -1926,6 +1926,10 @@ public interface CollectionDAO {
+     default String getNameColumn() {
+       return "name";
+     }
++
++    @ConnectionAwareSqlQuery(value = "SELECT id FROM role_entity WHERE name = :role", connectionType = MYSQL)
++    @ConnectionAwareSqlQuery(value = "SELECT id FROM role_entity WHERE name = :role", connectionType = POSTGRES)
++    String checkRoleExists(@Bind("role") String role);
+   }
+ 
+   interface TeamDAO extends EntityDAO<Team> {
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/ListFilter.java b/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/ListFilter.java
+index acc5605dc..b622df8ea 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/ListFilter.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/ListFilter.java
+@@ -46,8 +46,8 @@ public class ListFilter {
+     condition = addCondition(condition, getServiceCondition(tableName));
+     condition = addCondition(condition, getParentCondition(tableName));
+     condition = addCondition(condition, getCategoryCondition(tableName));
+-    condition = addCondition(condition, getWebhookCondition(tableName));
+-    condition = addCondition(condition, getWebhookTypeCondition(tableName));
++    condition = addCondition(condition, getEventConfigStatusCondition(tableName));
++    condition = addCondition(condition, getEventConfigTypeCondition(tableName));
+     return condition.isEmpty() ? "WHERE TRUE" : "WHERE " + condition;
+   }
+ 
+@@ -82,14 +82,14 @@ public class ListFilter {
+     return category == null ? "" : getCategoryPrefixCondition(tableName, escape(category));
+   }
+ 
+-  public String getWebhookCondition(String tableName) {
++  public String getEventConfigStatusCondition(String tableName) {
+     String webhookStatus = queryParams.get("status");
+     return webhookStatus == null ? "" : getStatusPrefixCondition(tableName, escape(webhookStatus));
+   }
+ 
+-  public String getWebhookTypeCondition(String tableName) {
+-    String webhookType = queryParams.get("webhookType");
+-    return webhookType == null ? "" : getWebhookTypePrefixCondition(tableName, escape(webhookType));
++  public String getEventConfigTypeCondition(String tableName) {
++    String eventConfigType = queryParams.get("eventConfigType");
++    return eventConfigType == null ? "" : getWebhookTypePrefixCondition(tableName, escape(eventConfigType));
+   }
+ 
+   private String getFqnPrefixCondition(String tableName, String fqnPrefix) {
+@@ -103,8 +103,8 @@ public class ListFilter {
+ 
+   private String getWebhookTypePrefixCondition(String tableName, String typePrefix) {
+     return tableName == null
+-        ? String.format("webhookType LIKE '%s%%'", typePrefix)
+-        : String.format("%s.webhookType LIKE '%s%%'", tableName, typePrefix);
++        ? String.format("eventConfigType LIKE '%s%%'", typePrefix)
++        : String.format("%s.eventConfigType LIKE '%s%%'", tableName, typePrefix);
+   }
+ 
+   private String getCategoryPrefixCondition(String tableName, String category) {
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/UserRepository.java b/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/UserRepository.java
+index 598fa5686..ad3914130 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/UserRepository.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/UserRepository.java
+@@ -15,6 +15,7 @@ package org.openmetadata.service.jdbi3;
+ 
+ import static org.openmetadata.common.utils.CommonUtil.listOrEmpty;
+ import static org.openmetadata.service.Entity.TEAM;
++import static org.openmetadata.service.Entity.getEntityReferenceById;
+ 
+ import java.io.IOException;
+ import java.util.ArrayList;
+@@ -236,6 +237,21 @@ public class UserRepository extends EntityRepository<User> {
+     return teams;
+   }
+ 
++  public void inheritRolesFromSSO(User user, List<String> roles) throws IOException {
++    // clearing the existing roles
++    user.setRoles(null);
++    List<EntityReference> entityReferences = new ArrayList<>();
++    for (String role : roles) {
++      String id = daoCollection.roleDAO().checkRoleExists(role);
++      if (id != null) {
++        EntityReference roleReference = getEntityReferenceById(Entity.ROLE, UUID.fromString(id), NON_DELETED);
++        entityReferences.add(roleReference);
++      }
++    }
++    // assigning the roles to the user
++    user.setRoles(entityReferences);
++  }
++
+   private void assignRoles(User user, List<EntityReference> roles) {
+     roles = listOrEmpty(roles);
+     for (EntityReference role : roles) {
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/WebhookRepository.java b/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/WebhookRepository.java
+deleted file mode 100644
+index 91f219c77..000000000
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/jdbi3/WebhookRepository.java
++++ /dev/null
+@@ -1,177 +0,0 @@
+-/*
+- *  Copyright 2021 Collate
+- *  Licensed under the Apache License, Version 2.0 (the "License");
+- *  you may not use this file except in compliance with the License.
+- *  You may obtain a copy of the License at
+- *  http://www.apache.org/licenses/LICENSE-2.0
+- *  Unless required by applicable law or agreed to in writing, software
+- *  distributed under the License is distributed on an "AS IS" BASIS,
+- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- *  See the License for the specific language governing permissions and
+- *  limitations under the License.
+- */
+-
+-package org.openmetadata.service.jdbi3;
+-
+-import static org.openmetadata.service.util.EntityUtil.eventFilterMatch;
+-import static org.openmetadata.service.util.EntityUtil.failureDetailsMatch;
+-
+-import com.fasterxml.jackson.core.JsonProcessingException;
+-import com.lmax.disruptor.BatchEventProcessor;
+-import java.io.IOException;
+-import java.util.ArrayList;
+-import java.util.List;
+-import java.util.UUID;
+-import java.util.concurrent.ConcurrentHashMap;
+-import lombok.SneakyThrows;
+-import lombok.extern.slf4j.Slf4j;
+-import org.openmetadata.schema.filter.EventFilter;
+-import org.openmetadata.schema.type.Webhook;
+-import org.openmetadata.schema.type.Webhook.Status;
+-import org.openmetadata.schema.type.WebhookType;
+-import org.openmetadata.service.Entity;
+-import org.openmetadata.service.events.EventPubSub;
+-import org.openmetadata.service.events.EventPubSub.ChangeEventHolder;
+-import org.openmetadata.service.events.MSTeamsWebhookPublisher;
+-import org.openmetadata.service.events.WebhookPublisher;
+-import org.openmetadata.service.resources.events.WebhookResource;
+-import org.openmetadata.service.slack.SlackWebhookEventPublisher;
+-import org.openmetadata.service.util.EntityUtil.Fields;
+-
+-@Slf4j
+-public class WebhookRepository extends EntityRepository<Webhook> {
+-  private static final ConcurrentHashMap<UUID, WebhookPublisher> webhookPublisherMap = new ConcurrentHashMap<>();
+-
+-  public WebhookRepository(CollectionDAO dao) {
+-    super(WebhookResource.COLLECTION_PATH, Entity.WEBHOOK, Webhook.class, dao.webhookDAO(), dao, "", "");
+-  }
+-
+-  @Override
+-  public Webhook setFields(Webhook entity, Fields fields) {
+-    return entity; // No fields to set
+-  }
+-
+-  @Override
+-  public void prepare(Webhook entity) {
+-    /* Nothing to do */
+-  }
+-
+-  @Override
+-  public void storeEntity(Webhook entity, boolean update) throws IOException {
+-    entity.setHref(null);
+-    store(entity, update);
+-  }
+-
+-  @Override
+-  public void storeRelationships(Webhook entity) {
+-    // No relationship to store
+-  }
+-
+-  @Override
+-  public void restorePatchAttributes(Webhook original, Webhook updated) {
+-    updated.withId(original.getId()).withName(original.getName());
+-  }
+-
+-  @Override
+-  public WebhookUpdater getUpdater(Webhook original, Webhook updated, Operation operation) {
+-    return new WebhookUpdater(original, updated, operation);
+-  }
+-
+-  private WebhookPublisher getPublisher(UUID id) {
+-    return webhookPublisherMap.get(id);
+-  }
+-
+-  public void addWebhookPublisher(Webhook webhook) {
+-    if (Boolean.FALSE.equals(webhook.getEnabled())) { // Only add webhook that is enabled for publishing events
+-      webhook.setStatus(Status.DISABLED);
+-      return;
+-    }
+-
+-    WebhookPublisher publisher;
+-    if (webhook.getWebhookType() == WebhookType.slack) {
+-      publisher = new SlackWebhookEventPublisher(webhook, daoCollection);
+-    } else if (webhook.getWebhookType() == WebhookType.msteams) {
+-      publisher = new MSTeamsWebhookPublisher(webhook, daoCollection);
+-    } else {
+-      publisher = new WebhookPublisher(webhook, daoCollection);
+-    }
+-    BatchEventProcessor<ChangeEventHolder> processor = EventPubSub.addEventHandler(publisher);
+-    publisher.setProcessor(processor);
+-    webhookPublisherMap.put(webhook.getId(), publisher);
+-    LOG.info("Webhook publisher subscription started for {}", webhook.getName());
+-  }
+-
+-  @SneakyThrows
+-  public void updateWebhookPublisher(Webhook webhook) {
+-    if (Boolean.TRUE.equals(webhook.getEnabled())) { // Only add webhook that is enabled for publishing
+-      // If there was a previous webhook either in disabled state or stopped due
+-      // to errors, update it and restart publishing
+-      WebhookPublisher previousPublisher = getPublisher(webhook.getId());
+-      if (previousPublisher == null) {
+-        addWebhookPublisher(webhook);
+-        return;
+-      }
+-
+-      // Update the existing publisher
+-      Status status = previousPublisher.getWebhook().getStatus();
+-      previousPublisher.updateWebhook(webhook);
+-      if (status != Status.ACTIVE && status != Status.AWAITING_RETRY) {
+-        // Restart the previously stopped publisher (in states notStarted, error, retryLimitReached)
+-        BatchEventProcessor<ChangeEventHolder> processor = EventPubSub.addEventHandler(previousPublisher);
+-        previousPublisher.setProcessor(processor);
+-        LOG.info("Webhook publisher restarted for {}", webhook.getName());
+-      }
+-    } else {
+-      // Remove the webhook publisher
+-      deleteWebhookPublisher(webhook.getId());
+-    }
+-  }
+-
+-  public void deleteWebhookPublisher(UUID id) throws InterruptedException {
+-    WebhookPublisher publisher = webhookPublisherMap.remove(id);
+-    if (publisher != null) {
+-      publisher.getProcessor().halt();
+-      publisher.awaitShutdown();
+-      EventPubSub.removeProcessor(publisher.getProcessor());
+-      LOG.info("Webhook publisher deleted for {}", publisher.getWebhook().getName());
+-    }
+-  }
+-
+-  public class WebhookUpdater extends EntityUpdater {
+-    public WebhookUpdater(Webhook original, Webhook updated, Operation operation) {
+-      super(original, updated, operation);
+-    }
+-
+-    @Override
+-    public void entitySpecificUpdate() throws IOException {
+-      recordChange("enabled", original.getEnabled(), updated.getEnabled());
+-      recordChange("status", original.getStatus(), updated.getStatus());
+-      recordChange("endPoint", original.getEndpoint(), updated.getEndpoint());
+-      recordChange("batchSize", original.getBatchSize(), updated.getBatchSize());
+-      recordChange("timeout", original.getTimeout(), updated.getTimeout());
+-      updateEventFilters();
+-      if (fieldsChanged()) {
+-        // If updating the other fields, opportunistically use it to capture failure details
+-        WebhookPublisher publisher = WebhookRepository.this.getPublisher(original.getId());
+-        if (publisher != null && updated != publisher.getWebhook()) {
+-          updated
+-              .withStatus(publisher.getWebhook().getStatus())
+-              .withFailureDetails(publisher.getWebhook().getFailureDetails());
+-          if (Boolean.FALSE.equals(updated.getEnabled())) {
+-            updated.setStatus(Status.DISABLED);
+-          }
+-        }
+-        recordChange(
+-            "failureDetails", original.getFailureDetails(), updated.getFailureDetails(), true, failureDetailsMatch);
+-      }
+-    }
+-
+-    private void updateEventFilters() throws JsonProcessingException {
+-      List<EventFilter> origFilter = original.getEventFilters();
+-      List<EventFilter> updatedFilter = updated.getEventFilters();
+-      List<EventFilter> added = new ArrayList<>();
+-      List<EventFilter> deleted = new ArrayList<>();
+-      recordListChange("eventFilters", origFilter, updatedFilter, added, deleted, eventFilterMatch);
+-    }
+-  }
+-}
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/resources/events/WebhookResource.java b/openmetadata-service/src/main/java/org/openmetadata/service/resources/events/WebhookResource.java
+deleted file mode 100644
+index 200621655..000000000
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/resources/events/WebhookResource.java
++++ /dev/null
+@@ -1,369 +0,0 @@
+-/*
+- *  Copyright 2021 Collate
+- *  Licensed under the Apache License, Version 2.0 (the "License");
+- *  you may not use this file except in compliance with the License.
+- *  You may obtain a copy of the License at
+- *  http://www.apache.org/licenses/LICENSE-2.0
+- *  Unless required by applicable law or agreed to in writing, software
+- *  distributed under the License is distributed on an "AS IS" BASIS,
+- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- *  See the License for the specific language governing permissions and
+- *  limitations under the License.
+- */
+-
+-package org.openmetadata.service.resources.events;
+-
+-import io.swagger.annotations.Api;
+-import io.swagger.v3.oas.annotations.ExternalDocumentation;
+-import io.swagger.v3.oas.annotations.Operation;
+-import io.swagger.v3.oas.annotations.Parameter;
+-import io.swagger.v3.oas.annotations.media.Content;
+-import io.swagger.v3.oas.annotations.media.ExampleObject;
+-import io.swagger.v3.oas.annotations.media.Schema;
+-import io.swagger.v3.oas.annotations.parameters.RequestBody;
+-import io.swagger.v3.oas.annotations.responses.ApiResponse;
+-import java.io.IOException;
+-import java.util.List;
+-import java.util.UUID;
+-import javax.json.JsonPatch;
+-import javax.validation.Valid;
+-import javax.validation.constraints.Max;
+-import javax.validation.constraints.Min;
+-import javax.ws.rs.Consumes;
+-import javax.ws.rs.DELETE;
+-import javax.ws.rs.DefaultValue;
+-import javax.ws.rs.GET;
+-import javax.ws.rs.PATCH;
+-import javax.ws.rs.POST;
+-import javax.ws.rs.PUT;
+-import javax.ws.rs.Path;
+-import javax.ws.rs.PathParam;
+-import javax.ws.rs.Produces;
+-import javax.ws.rs.QueryParam;
+-import javax.ws.rs.core.Context;
+-import javax.ws.rs.core.MediaType;
+-import javax.ws.rs.core.Response;
+-import javax.ws.rs.core.SecurityContext;
+-import javax.ws.rs.core.UriInfo;
+-import lombok.extern.slf4j.Slf4j;
+-import org.openmetadata.schema.api.events.CreateWebhook;
+-import org.openmetadata.schema.type.EntityHistory;
+-import org.openmetadata.schema.type.Include;
+-import org.openmetadata.schema.type.Webhook;
+-import org.openmetadata.schema.type.Webhook.Status;
+-import org.openmetadata.schema.type.WebhookType;
+-import org.openmetadata.service.OpenMetadataApplicationConfig;
+-import org.openmetadata.service.jdbi3.CollectionDAO;
+-import org.openmetadata.service.jdbi3.CollectionDAO.WebhookDAO;
+-import org.openmetadata.service.jdbi3.ListFilter;
+-import org.openmetadata.service.jdbi3.WebhookRepository;
+-import org.openmetadata.service.resources.Collection;
+-import org.openmetadata.service.resources.EntityResource;
+-import org.openmetadata.service.security.Authorizer;
+-import org.openmetadata.service.util.JsonUtils;
+-import org.openmetadata.service.util.ResultList;
+-
+-@Slf4j
+-@Path("/v1/webhook")
+-@Api(value = "Webhook resource", tags = "webhook")
+-@Produces(MediaType.APPLICATION_JSON)
+-@Consumes(MediaType.APPLICATION_JSON)
+-@Collection(name = "webhook")
+-public class WebhookResource extends EntityResource<Webhook, WebhookRepository> {
+-  public static final String COLLECTION_PATH = "v1/webhook/";
+-  private final WebhookDAO webhookDAO;
+-
+-  @Override
+-  public Webhook addHref(UriInfo uriInfo, Webhook entity) {
+-    return entity;
+-  }
+-
+-  public static class WebhookList extends ResultList<Webhook> {
+-
+-    @SuppressWarnings("unused") /* Required for tests */
+-    public WebhookList() {}
+-  }
+-
+-  public WebhookResource(CollectionDAO dao, Authorizer authorizer) {
+-    super(Webhook.class, new WebhookRepository(dao), authorizer);
+-    webhookDAO = dao.webhookDAO();
+-  }
+-
+-  @Override
+-  public void initialize(OpenMetadataApplicationConfig config) {
+-    try {
+-      List<String> listAllWebhooks = webhookDAO.listAllWebhooks(webhookDAO.getTableName());
+-      List<Webhook> webhookList = JsonUtils.readObjects(listAllWebhooks, Webhook.class);
+-      webhookList.forEach(dao::addWebhookPublisher);
+-    } catch (Exception ex) {
+-      // Starting application should not fail
+-      LOG.warn("Exception during initialization", ex);
+-    }
+-  }
+-
+-  @GET
+-  @Operation(
+-      operationId = "listWebHooks",
+-      summary = "List webhooks",
+-      tags = "webhook",
+-      description = "Get a list of webhook subscriptions",
+-      responses = {
+-        @ApiResponse(
+-            responseCode = "200",
+-            description = "List of webhooks",
+-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = WebhookList.class)))
+-      })
+-  public ResultList<Webhook> list(
+-      @Context UriInfo uriInfo,
+-      @Context SecurityContext securityContext,
+-      @Parameter(description = "Filter webhooks by status", schema = @Schema(type = "string", example = "active"))
+-          @QueryParam("status")
+-          String statusParam,
+-      @Parameter(
+-              description = "Filter webhooks by type",
+-              schema = @Schema(type = "string", example = "generic, slack, msteams"))
+-          @QueryParam("webhookType")
+-          String typeParam,
+-      @Parameter(description = "Limit the number webhooks returned. (1 to 1000000, default = " + "10) ")
+-          @DefaultValue("10")
+-          @Min(0)
+-          @Max(1000000)
+-          @QueryParam("limit")
+-          int limitParam,
+-      @Parameter(description = "Returns list of webhooks before this cursor", schema = @Schema(type = "string"))
+-          @QueryParam("before")
+-          String before,
+-      @Parameter(description = "Returns list of webhooks after this cursor", schema = @Schema(type = "string"))
+-          @QueryParam("after")
+-          String after,
+-      @Parameter(
+-              description = "Include all, deleted, or non-deleted entities.",
+-              schema = @Schema(implementation = Include.class))
+-          @QueryParam("include")
+-          @DefaultValue("non-deleted")
+-          Include include)
+-      throws IOException {
+-    ListFilter filter =
+-        new ListFilter(Include.ALL).addQueryParam("status", statusParam).addQueryParam("webhookType", typeParam);
+-    return listInternal(uriInfo, securityContext, "", filter, limitParam, before, after);
+-  }
+-
+-  @GET
+-  @Path("/{id}")
+-  @Valid
+-  @Operation(
+-      operationId = "getWebHookByID",
+-      summary = "Get a webhook",
+-      tags = "webhook",
+-      description = "Get a webhook by given Id",
+-      responses = {
+-        @ApiResponse(
+-            responseCode = "200",
+-            description = "Entity events",
+-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+-        @ApiResponse(responseCode = "404", description = "Entity for instance {id} is not found")
+-      })
+-  public Webhook get(
+-      @Context UriInfo uriInfo,
+-      @Context SecurityContext securityContext,
+-      @Parameter(description = "webhook Id", schema = @Schema(type = "UUID")) @PathParam("id") UUID id,
+-      @Parameter(
+-              description = "Include all, deleted, or non-deleted entities.",
+-              schema = @Schema(implementation = Include.class))
+-          @QueryParam("include")
+-          @DefaultValue("non-deleted")
+-          Include include)
+-      throws IOException {
+-    return getInternal(uriInfo, securityContext, id, "", include);
+-  }
+-
+-  @GET
+-  @Path("/name/{name}")
+-  @Operation(
+-      operationId = "getWebHookByFQN",
+-      summary = "Get a webhook by name",
+-      tags = "webhook",
+-      description = "Get a webhook by name.",
+-      responses = {
+-        @ApiResponse(
+-            responseCode = "200",
+-            description = "webhook",
+-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+-        @ApiResponse(responseCode = "404", description = "Webhook for instance {id} is not found")
+-      })
+-  public Webhook getByName(
+-      @Context UriInfo uriInfo,
+-      @Context SecurityContext securityContext,
+-      @Parameter(description = "Name of the webhook", schema = @Schema(type = "string")) @PathParam("name") String name,
+-      @Parameter(
+-              description = "Include all, deleted, or non-deleted entities.",
+-              schema = @Schema(implementation = Include.class))
+-          @QueryParam("include")
+-          @DefaultValue("non-deleted")
+-          Include include)
+-      throws IOException {
+-    return getByNameInternal(uriInfo, securityContext, name, "", include);
+-  }
+-
+-  @GET
+-  @Path("/{id}/versions")
+-  @Operation(
+-      operationId = "listAllWebHookVersion",
+-      summary = "List webhook versions",
+-      tags = "webhook",
+-      description = "Get a list of all the versions of a webhook identified by `id`",
+-      responses = {
+-        @ApiResponse(
+-            responseCode = "200",
+-            description = "List of webhook versions",
+-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = EntityHistory.class)))
+-      })
+-  public EntityHistory listVersions(
+-      @Context UriInfo uriInfo,
+-      @Context SecurityContext securityContext,
+-      @Parameter(description = "webhook Id", schema = @Schema(type = "string")) @PathParam("id") UUID id)
+-      throws IOException {
+-    return super.listVersionsInternal(securityContext, id);
+-  }
+-
+-  @GET
+-  @Path("/{id}/versions/{version}")
+-  @Operation(
+-      operationId = "getSpecificWebhookVersion",
+-      summary = "Get a version of the webhook",
+-      tags = "webhook",
+-      description = "Get a version of the webhook by given `id`",
+-      responses = {
+-        @ApiResponse(
+-            responseCode = "200",
+-            description = "webhook",
+-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+-        @ApiResponse(
+-            responseCode = "404",
+-            description = "Webhook for instance {id} and version {version} is " + "not found")
+-      })
+-  public Webhook getVersion(
+-      @Context UriInfo uriInfo,
+-      @Context SecurityContext securityContext,
+-      @Parameter(description = "webhook Id", schema = @Schema(type = "UUID")) @PathParam("id") UUID id,
+-      @Parameter(
+-              description = "webhook version number in the form `major`.`minor`",
+-              schema = @Schema(type = "string", example = "0.1 or 1.1"))
+-          @PathParam("version")
+-          String version)
+-      throws IOException {
+-    return super.getVersionInternal(securityContext, id, version);
+-  }
+-
+-  @POST
+-  @Operation(
+-      operationId = "createWebHook",
+-      summary = "Subscribe to a new webhook",
+-      tags = "webhook",
+-      description = "Subscribe to a new webhook",
+-      responses = {
+-        @ApiResponse(
+-            responseCode = "200",
+-            description = "webhook",
+-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+-        @ApiResponse(responseCode = "400", description = "Bad request")
+-      })
+-  public Response createWebhook(
+-      @Context UriInfo uriInfo, @Context SecurityContext securityContext, @Valid CreateWebhook create)
+-      throws IOException {
+-    Webhook webhook = getWebhook(create, securityContext.getUserPrincipal().getName());
+-    Response response = create(uriInfo, securityContext, webhook);
+-    dao.addWebhookPublisher(webhook);
+-    return response;
+-  }
+-
+-  @PUT
+-  @Operation(
+-      operationId = "createOrUpdateWebhook",
+-      summary = "Updated an existing or create a new webhook",
+-      tags = "webhook",
+-      description = "Updated an existing or create a new webhook",
+-      responses = {
+-        @ApiResponse(
+-            responseCode = "200",
+-            description = "webhook",
+-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+-        @ApiResponse(responseCode = "400", description = "Bad request")
+-      })
+-  public Response updateWebhook(
+-      @Context UriInfo uriInfo, @Context SecurityContext securityContext, @Valid CreateWebhook create)
+-      throws IOException {
+-    Webhook webhook = getWebhook(create, securityContext.getUserPrincipal().getName());
+-    Response response = createOrUpdate(uriInfo, securityContext, webhook);
+-    dao.updateWebhookPublisher((Webhook) response.getEntity());
+-    return response;
+-  }
+-
+-  @PATCH
+-  @Path("/{id}")
+-  @Operation(
+-      operationId = "patchWebHook",
+-      summary = "Update a webhook",
+-      tags = "webhook",
+-      description = "Update an existing webhook using JsonPatch.",
+-      externalDocs = @ExternalDocumentation(description = "JsonPatch RFC", url = "https://tools.ietf.org/html/rfc6902"))
+-  @Consumes(MediaType.APPLICATION_JSON_PATCH_JSON)
+-  public Response patch(
+-      @Context UriInfo uriInfo,
+-      @Context SecurityContext securityContext,
+-      @PathParam("id") UUID id,
+-      @RequestBody(
+-              description = "JsonPatch with array of operations",
+-              content =
+-                  @Content(
+-                      mediaType = MediaType.APPLICATION_JSON_PATCH_JSON,
+-                      examples = {
+-                        @ExampleObject("[" + "{op:remove, path:/a}," + "{op:add, path: /b, value: val}" + "]")
+-                      }))
+-          JsonPatch patch)
+-      throws IOException {
+-    Response response = patchInternal(uriInfo, securityContext, id, patch);
+-    dao.updateWebhookPublisher((Webhook) response.getEntity());
+-    return response;
+-  }
+-
+-  @DELETE
+-  @Path("/{id}")
+-  @Valid
+-  @Operation(
+-      operationId = "deleteWebHook",
+-      summary = "Delete a webhook",
+-      tags = "webhook",
+-      description = "Get a webhook by given Id",
+-      responses = {
+-        @ApiResponse(
+-            responseCode = "200",
+-            description = "Entity events",
+-            content = @Content(mediaType = "application/json", schema = @Schema(implementation = Webhook.class))),
+-        @ApiResponse(responseCode = "404", description = "Entity for instance {id} is not found")
+-      })
+-  public Response deleteWebhook(
+-      @Context UriInfo uriInfo,
+-      @Context SecurityContext securityContext,
+-      @Parameter(description = "webhook Id", schema = @Schema(type = "UUID")) @PathParam("id") UUID id)
+-      throws IOException, InterruptedException {
+-    Response response = delete(uriInfo, securityContext, id, false, true);
+-    dao.deleteWebhookPublisher(id);
+-    return response;
+-  }
+-
+-  public Webhook getWebhook(CreateWebhook create, String user) throws IOException {
+-    // Add filter for soft delete events if delete event type is requested
+-    //  TODO: What is this for??
+-    // EntityUtil.addSoftDeleteFilter(create.getEventFilters());
+-    return copy(new Webhook(), create, user)
+-        .withEndpoint(create.getEndpoint())
+-        .withEventFilters(create.getEventFilters())
+-        .withBatchSize(create.getBatchSize())
+-        .withTimeout(create.getTimeout())
+-        .withEnabled(create.getEnabled())
+-        .withSecretKey(create.getSecretKey())
+-        .withStatus(Boolean.TRUE.equals(create.getEnabled()) ? Status.ACTIVE : Status.DISABLED)
+-        .withWebhookType(create.getWebhookType() == null ? WebhookType.generic : create.getWebhookType());
+-  }
+-}
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/resources/teams/UserResource.java b/openmetadata-service/src/main/java/org/openmetadata/service/resources/teams/UserResource.java
+index ff9e7a285..fdb66fbcf 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/resources/teams/UserResource.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/resources/teams/UserResource.java
+@@ -38,6 +38,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
+ import java.io.IOException;
+ import java.time.LocalDateTime;
+ import java.time.ZoneId;
++import java.util.ArrayList;
+ import java.util.Date;
+ import java.util.List;
+ import java.util.UUID;
+@@ -326,6 +327,9 @@ public class UserResource extends EntityResource<User, UserRepository> {
+           @DefaultValue("non-deleted")
+           Include include)
+       throws IOException {
++//    User user = getByNameInternal(uriInfo, securityContext, name, fieldsParam, include);
++//    dao.inheritRolesFromSSO(user, new ArrayList<>());
++//    return decryptOrNullify(securityContext, user);
+     return decryptOrNullify(securityContext, getByNameInternal(uriInfo, securityContext, name, fieldsParam, include));
+   }
+ 
+@@ -480,6 +484,7 @@ public class UserResource extends EntityResource<User, UserRepository> {
+       // else the user will get a mail if configured smtp
+     }
+     // TODO do we need to authenticate user is creating himself?
++//    dao.inheritRolesFromSSO(user, new ArrayList<>());
+     addHref(uriInfo, dao.create(uriInfo, user));
+     if (isBasicAuth() && isEmailServiceEnabled) {
+       try {
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/security/JwtFilter.java b/openmetadata-service/src/main/java/org/openmetadata/service/security/JwtFilter.java
+index cc306cc42..072a46fb4 100644
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/security/JwtFilter.java
++++ b/openmetadata-service/src/main/java/org/openmetadata/service/security/JwtFilter.java
+@@ -26,6 +26,8 @@ import com.google.common.collect.ImmutableList;
+ import io.dropwizard.util.Strings;
+ import java.net.URL;
+ import java.security.interfaces.RSAPublicKey;
++import java.util.ArrayList;
++import java.util.Arrays;
+ import java.util.Calendar;
+ import java.util.List;
+ import java.util.Map;
+@@ -54,6 +56,7 @@ public class JwtFilter implements ContainerRequestFilter {
+   public static final String AUTHORIZATION_HEADER = "Authorization";
+   public static final String TOKEN_PREFIX = "Bearer";
+   public static final String BOT_CLAIM = "isBot";
++  public static final String ROLE_CLAIM = "role";
+   private List<String> jwtPrincipalClaims;
+   private JwkProvider jwkProvider;
+   private String principalDomain;
+@@ -130,6 +133,12 @@ public class JwtFilter implements ContainerRequestFilter {
+     if (claims.containsKey(BOT_CLAIM) && Boolean.TRUE.equals(claims.get(BOT_CLAIM).asBoolean())) {
+       validateBotToken(tokenFromHeader, userName);
+     }
++//    List<String> roleName = new ArrayList<>();
++//    // assign role
++//    if (claims.containsKey(ROLE_CLAIM)) {
++//      String roleClaim = claims.get(ROLE_CLAIM).toString();
++//      roleName = Arrays.asList(roleClaim.split("\\s*,\\s*"));
++//    }
+ 
+     // Setting Security Context
+     CatalogPrincipal catalogPrincipal = new CatalogPrincipal(userName);
+diff --git a/openmetadata-service/src/main/java/org/openmetadata/service/slack/SlackWebhookEventPublisher.java b/openmetadata-service/src/main/java/org/openmetadata/service/slack/SlackWebhookEventPublisher.java
+deleted file mode 100644
+index 302b88740..000000000
+--- a/openmetadata-service/src/main/java/org/openmetadata/service/slack/SlackWebhookEventPublisher.java
++++ /dev/null
+@@ -1,63 +0,0 @@
+-package org.openmetadata.service.slack;
+-
+-import java.util.concurrent.TimeUnit;
+-import javax.ws.rs.client.Client;
+-import javax.ws.rs.client.ClientBuilder;
+-import javax.ws.rs.client.Invocation;
+-import javax.ws.rs.core.MediaType;
+-import javax.ws.rs.core.Response;
+-import lombok.extern.slf4j.Slf4j;
+-import org.openmetadata.schema.type.ChangeEvent;
+-import org.openmetadata.schema.type.Webhook;
+-import org.openmetadata.service.events.WebhookPublisher;
+-import org.openmetadata.service.events.errors.EventPublisherException;
+-import org.openmetadata.service.jdbi3.CollectionDAO;
+-import org.openmetadata.service.resources.events.EventResource.ChangeEventList;
+-import org.openmetadata.service.util.ChangeEventParser;
+-
+-@Slf4j
+-public class SlackWebhookEventPublisher extends WebhookPublisher {
+-  private final Invocation.Builder target;
+-  private final Client client;
+-
+-  public SlackWebhookEventPublisher(Webhook webhook, CollectionDAO dao) {
+-    super(webhook, dao);
+-    String slackWebhookURL = webhook.getEndpoint().toString();
+-    ClientBuilder clientBuilder = ClientBuilder.newBuilder();
+-    clientBuilder.connectTimeout(webhook.getTimeout(), TimeUnit.SECONDS);
+-    clientBuilder.readTimeout(webhook.getReadTimeout(), TimeUnit.SECONDS);
+-    client = clientBuilder.build();
+-    target = client.target(slackWebhookURL).request();
+-  }
+-
+-  @Override
+-  public void onStart() {
+-    LOG.info("Slack Webhook Publisher Started");
+-  }
+-
+-  @Override
+-  public void onShutdown() {
+-    if (client != null) {
+-      client.close();
+-    }
+-  }
+-
+-  @Override
+-  public void publish(ChangeEventList events) throws EventPublisherException {
+-    for (ChangeEvent event : events.getData()) {
+-      try {
+-        SlackMessage slackMessage = ChangeEventParser.buildSlackMessage(event);
+-        Response response =
+-            target.post(javax.ws.rs.client.Entity.entity(slackMessage, MediaType.APPLICATION_JSON_TYPE));
+-        if (response.getStatus() >= 300 && response.getStatus() < 400) {
+-          throw new EventPublisherException(
+-              "Slack webhook callback is getting redirected. " + "Please check your configuration");
+-        } else if (response.getStatus() >= 300 && response.getStatus() < 600) {
+-          throw new SlackRetriableException(response.getStatusInfo().getReasonPhrase());
+-        }
+-      } catch (Exception e) {
+-        LOG.error("Failed to publish event {} to slack due to {} ", event, e.getMessage());
+-      }
+-    }
+-  }
+-}
+diff --git a/openmetadata-service/src/main/resources/json/data/ResourceDescriptors.json b/openmetadata-service/src/main/resources/json/data/ResourceDescriptors.json
+index de01c9795..6da70e8b7 100644
+--- a/openmetadata-service/src/main/resources/json/data/ResourceDescriptors.json
++++ b/openmetadata-service/src/main/resources/json/data/ResourceDescriptors.json
+@@ -122,6 +122,18 @@
+       "EditCustomFields"
+     ]
+   },
++  {
++    "name" : "eventConfig",
++    "operations" : [
++      "Create",
++      "Delete",
++      "ViewAll",
++      "EditAll",
++      "EditDescription",
++      "EditDisplayName",
++      "EditCustomFields"
++    ]
++  },
+   {
+     "name" : "glossary",
+     "operations" : [
+@@ -379,18 +391,6 @@
+       "EditCustomFields"
+     ]
+   },
+-  {
+-    "name" : "webhook",
+-    "operations" : [
+-      "Create",
+-      "Delete",
+-      "ViewAll",
+-      "EditAll",
+-      "EditDescription",
+-      "EditDisplayName",
+-      "EditCustomFields"
+-    ]
+-  },
+   {
+     "name" : "events",
+     "operations" : [
+diff --git a/openmetadata-service/src/test/java/org/openmetadata/service/resources/EntityResourceTest.java b/openmetadata-service/src/test/java/org/openmetadata/service/resources/EntityResourceTest.java
+index 80d3fdbee..c56fbd339 100644
+--- a/openmetadata-service/src/test/java/org/openmetadata/service/resources/EntityResourceTest.java
++++ b/openmetadata-service/src/test/java/org/openmetadata/service/resources/EntityResourceTest.java
+@@ -136,8 +136,8 @@ import org.openmetadata.service.resources.databases.TableResourceTest;
+ import org.openmetadata.service.resources.dqtests.TestCaseResourceTest;
+ import org.openmetadata.service.resources.dqtests.TestDefinitionResourceTest;
+ import org.openmetadata.service.resources.dqtests.TestSuiteResourceTest;
++import org.openmetadata.service.resources.events.EventConfigResourceTest;
+ import org.openmetadata.service.resources.events.EventResource.ChangeEventList;
+-import org.openmetadata.service.resources.events.WebhookResourceTest;
+ import org.openmetadata.service.resources.glossary.GlossaryResourceTest;
+ import org.openmetadata.service.resources.kpi.KpiResourceTest;
+ import org.openmetadata.service.resources.metadata.TypeResourceTest;
+@@ -349,18 +349,18 @@ public abstract class EntityResourceTest<T extends EntityInterface, K extends Cr
+     runWebhookTests = new Random().nextBoolean();
+     if (runWebhookTests) {
+       webhookCallbackResource.clearEvents();
+-      WebhookResourceTest webhookResourceTest = new WebhookResourceTest();
+-      webhookResourceTest.startWebhookSubscription();
+-      webhookResourceTest.startWebhookEntitySubscriptions(entityType);
++      EventConfigResourceTest eventConfigResourceTest = new EventConfigResourceTest();
++      eventConfigResourceTest.startWebhookSubscription();
++      eventConfigResourceTest.startWebhookEntitySubscriptions(entityType);
+     }
+   }
+ 
+   @AfterAll
+   public void afterAllTests() throws Exception {
+     if (runWebhookTests) {
+-      WebhookResourceTest webhookResourceTest = new WebhookResourceTest();
+-      webhookResourceTest.validateWebhookEvents();
+-      webhookResourceTest.validateWebhookEntityEvents(entityType);
++      EventConfigResourceTest eventConfigResourceTest = new EventConfigResourceTest();
++      eventConfigResourceTest.validateWebhookEvents();
++      eventConfigResourceTest.validateWebhookEntityEvents(entityType);
+     }
+     delete_recursiveTest();
+   }
+diff --git a/openmetadata-service/src/test/java/org/openmetadata/service/resources/events/WebhookResourceTest.java b/openmetadata-service/src/test/java/org/openmetadata/service/resources/events/WebhookResourceTest.java
+deleted file mode 100644
+index a61c18531..000000000
+--- a/openmetadata-service/src/test/java/org/openmetadata/service/resources/events/WebhookResourceTest.java
++++ /dev/null
+@@ -1,474 +0,0 @@
+-/*
+- *  Copyright 2021 Collate
+- *  Licensed under the Apache License, Version 2.0 (the "License");
+- *  you may not use this file except in compliance with the License.
+- *  You may obtain a copy of the License at
+- *  http://www.apache.org/licenses/LICENSE-2.0
+- *  Unless required by applicable law or agreed to in writing, software
+- *  distributed under the License is distributed on an "AS IS" BASIS,
+- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- *  See the License for the specific language governing permissions and
+- *  limitations under the License.
+- */
+-
+-package org.openmetadata.service.resources.events;
+-
+-import static org.junit.jupiter.api.Assertions.assertEquals;
+-import static org.junit.jupiter.api.Assertions.assertNotNull;
+-import static org.junit.jupiter.api.Assertions.assertNull;
+-import static org.junit.jupiter.api.Assertions.assertTrue;
+-import static org.openmetadata.service.util.EntityUtil.fieldAdded;
+-import static org.openmetadata.service.util.EntityUtil.fieldDeleted;
+-import static org.openmetadata.service.util.EntityUtil.fieldUpdated;
+-import static org.openmetadata.service.util.TestUtils.ADMIN_AUTH_HEADERS;
+-
+-import com.fasterxml.jackson.core.type.TypeReference;
+-import java.io.IOException;
+-import java.net.URI;
+-import java.time.Duration;
+-import java.util.*;
+-import java.util.concurrent.ConcurrentLinkedQueue;
+-import java.util.concurrent.atomic.AtomicBoolean;
+-import javax.ws.rs.core.Response;
+-import lombok.extern.slf4j.Slf4j;
+-import org.apache.http.client.HttpResponseException;
+-import org.awaitility.Awaitility;
+-import org.junit.jupiter.api.Test;
+-import org.junit.jupiter.api.TestInfo;
+-import org.openmetadata.schema.api.events.CreateWebhook;
+-import org.openmetadata.schema.filter.EventFilter;
+-import org.openmetadata.schema.filter.Filters;
+-import org.openmetadata.schema.type.ChangeDescription;
+-import org.openmetadata.schema.type.ChangeEvent;
+-import org.openmetadata.schema.type.EventType;
+-import org.openmetadata.schema.type.FailureDetails;
+-import org.openmetadata.schema.type.Webhook;
+-import org.openmetadata.schema.type.Webhook.Status;
+-import org.openmetadata.service.Entity;
+-import org.openmetadata.service.resources.EntityResourceTest;
+-import org.openmetadata.service.resources.events.WebhookCallbackResource.EventDetails;
+-import org.openmetadata.service.resources.events.WebhookResource.WebhookList;
+-import org.openmetadata.service.util.JsonUtils;
+-import org.openmetadata.service.util.TestUtils.UpdateType;
+-
+-@Slf4j
+-public class WebhookResourceTest extends EntityResourceTest<Webhook, CreateWebhook> {
+-  public static final List<EventFilter> ALL_EVENTS_FILTER = new ArrayList<>();
+-
+-  static {
+-    Set<String> allFilter = new HashSet<>();
+-    allFilter.add("all");
+-    EventFilter allEntityFilter = new EventFilter();
+-    allEntityFilter.setEntityType("all");
+-    allEntityFilter.setFilters(
+-        List.of(
+-            new Filters().withEventType(EventType.ENTITY_CREATED).withInclude(allFilter).withExclude(new HashSet<>()),
+-            new Filters().withEventType(EventType.ENTITY_UPDATED).withInclude(allFilter).withExclude(new HashSet<>()),
+-            new Filters().withEventType(EventType.ENTITY_DELETED).withInclude(allFilter).withExclude(new HashSet<>()),
+-            new Filters()
+-                .withEventType(EventType.ENTITY_SOFT_DELETED)
+-                .withInclude(allFilter)
+-                .withExclude(new HashSet<>())));
+-    ALL_EVENTS_FILTER.add(allEntityFilter);
+-  }
+-
+-  public WebhookResourceTest() {
+-    super(Entity.WEBHOOK, Webhook.class, WebhookList.class, "webhook", "");
+-    supportsAuthorizedMetadataOperations = false;
+-    supportsPatch = false;
+-    supportsFieldsQueryParam = false;
+-  }
+-
+-  @Test
+-  void post_webhookEnabledStateChange(TestInfo test) throws IOException {
+-    //
+-    // Create webhook in disabled state. It will not start webhook publisher
+-    //
+-    String webhookName = getEntityName(test);
+-    LOG.info("creating webhook in disabled state");
+-    String uri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook/" + webhookName;
+-    CreateWebhook create =
+-        createRequest(webhookName, "", "", null).withEnabled(false).withEndpoint(URI.create(uri)).withBatchSize(10);
+-    Webhook webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+-    assertEquals(Status.DISABLED, webhook.getStatus());
+-    Webhook getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+-    assertEquals(Status.DISABLED, getWebhook.getStatus());
+-    EventDetails details = webhookCallbackResource.getEventDetails(webhookName);
+-    assertNull(details);
+-
+-    //
+-    // Now enable the webhook
+-    //
+-    LOG.info("Enabling webhook");
+-    ChangeDescription change = getChangeDescription(webhook.getVersion());
+-    fieldUpdated(change, "enabled", false, true);
+-    fieldUpdated(change, "status", Status.DISABLED, Status.ACTIVE);
+-    fieldUpdated(change, "batchSize", 10, 50);
+-    create.withEnabled(true).withBatchSize(50);
+-
+-    webhook = updateAndCheckEntity(create, Response.Status.OK, ADMIN_AUTH_HEADERS, UpdateType.MINOR_UPDATE, change);
+-    assertEquals(Status.ACTIVE, webhook.getStatus());
+-    getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+-    assertEquals(Status.ACTIVE, getWebhook.getStatus());
+-
+-    // Ensure the call back notification has started
+-    details = waitForFirstEvent(webhookName, 25);
+-    assertEquals(1, details.getEvents().size());
+-    long lastSuccessfulEventTime = details.getLatestEventTime();
+-    FailureDetails failureDetails = new FailureDetails().withLastSuccessfulAt(lastSuccessfulEventTime);
+-
+-    //
+-    // Disable the webhook and ensure notification is disabled
+-    //
+-    LOG.info("Disabling webhook");
+-    create.withEnabled(false);
+-    change = getChangeDescription(getWebhook.getVersion());
+-    fieldAdded(change, "failureDetails", JsonUtils.pojoToJson(failureDetails));
+-    fieldUpdated(change, "enabled", true, false);
+-    fieldUpdated(change, "status", Status.ACTIVE, Status.DISABLED);
+-
+-    // Disabled webhook state is DISABLED
+-    getWebhook = updateAndCheckEntity(create, Response.Status.OK, ADMIN_AUTH_HEADERS, UpdateType.MINOR_UPDATE, change);
+-    assertEquals(Status.DISABLED, getWebhook.getStatus());
+-
+-    // Disabled webhook state also records last successful time when event was sent
+-    getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+-    assertEquals(Status.DISABLED, getWebhook.getStatus());
+-    assertEquals(details.getFirstEventTime(), getWebhook.getFailureDetails().getLastSuccessfulAt());
+-
+-    // Ensure callback back notification is disabled with no new events
+-    int iterations = 0;
+-    while (iterations < 10) {
+-      Awaitility.await().atLeast(Duration.ofMillis(100L)).untilTrue(new AtomicBoolean(true));
+-      iterations++;
+-      assertEquals(1, details.getEvents().size()); // Event counter remains the same
+-    }
+-
+-    deleteEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+-  }
+-
+-  @Test
+-  void put_updateEndpointURL(TestInfo test) throws IOException {
+-    // Create webhook with invalid URL
+-    CreateWebhook create =
+-        createRequest("counter", "", "", null).withEnabled(true).withEndpoint(URI.create("http://invalidUnknowHost"));
+-    Webhook webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+-
+-    // Wait for webhook to be marked as failed
+-    Awaitility.await()
+-        .pollInterval(Duration.ofMillis(100L))
+-        .atMost(Duration.ofMillis(100 * 100L))
+-        .untilTrue(hasWebHookFailed(webhook.getId()));
+-    Webhook getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+-    assertEquals(Status.FAILED, getWebhook.getStatus());
+-
+-    // Get webhook again to reflect the version change (when marked as failed)
+-    getWebhook = getEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+-    FailureDetails failureDetails = getWebhook.getFailureDetails();
+-
+-    // Now change the webhook URL to a valid URL and ensure callbacks resume
+-    String baseUri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook/" + test.getDisplayName();
+-    create = create.withEndpoint(URI.create(baseUri));
+-    ChangeDescription change = getChangeDescription(getWebhook.getVersion());
+-    fieldUpdated(change, "endPoint", webhook.getEndpoint(), create.getEndpoint());
+-    fieldUpdated(change, "status", Status.FAILED, Status.ACTIVE);
+-    fieldDeleted(change, "failureDetails", JsonUtils.pojoToJson(failureDetails));
+-
+-    webhook = updateAndCheckEntity(create, Response.Status.OK, ADMIN_AUTH_HEADERS, UpdateType.MINOR_UPDATE, change);
+-    deleteEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+-  }
+-
+-  private AtomicBoolean hasWebHookFailed(UUID webhookId) throws HttpResponseException {
+-    Webhook getWebhook = getEntity(webhookId, ADMIN_AUTH_HEADERS);
+-    LOG.info("webhook status {}", getWebhook.getStatus());
+-    return new AtomicBoolean(getWebhook.getStatus() == Status.FAILED);
+-  }
+-
+-  @Test
+-  void put_updateWebhookFilter(TestInfo test) throws IOException {
+-    String endpoint =
+-        "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook/counter/" + test.getDisplayName();
+-
+-    Set<String> allFilter = new HashSet<>();
+-    allFilter.add("all");
+-
+-    Filters createFilter =
+-        new Filters().withEventType(EventType.ENTITY_CREATED).withInclude(allFilter).withExclude(new HashSet<>());
+-    Filters updateFilter =
+-        new Filters().withEventType(EventType.ENTITY_UPDATED).withInclude(allFilter).withExclude(new HashSet<>());
+-    Filters deleteFilter =
+-        new Filters().withEventType(EventType.ENTITY_DELETED).withInclude(allFilter).withExclude(new HashSet<>());
+-
+-    EventFilter f1 = new EventFilter().withEntityType("all").withFilters(List.of(createFilter));
+-    EventFilter f2 =
+-        new EventFilter().withEntityType("all").withFilters(List.of(createFilter, updateFilter, deleteFilter));
+-    EventFilter f3 = new EventFilter().withEntityType("all").withFilters(List.of(updateFilter, deleteFilter));
+-    EventFilter f4 = new EventFilter().withEntityType("all").withFilters(List.of(updateFilter));
+-
+-    CreateWebhook create =
+-        createRequest("filterUpdate", "", "", null)
+-            .withEnabled(false)
+-            .withEndpoint(URI.create(endpoint))
+-            .withEventFilters(List.of(f1));
+-    Webhook webhook = createAndCheckEntity(create, ADMIN_AUTH_HEADERS);
+-
+-    // Now update the filter to include entity updated and deleted events
+-    create.setEventFilters(List.of(f2));
+-    ChangeDescription change = getChangeDescription(webhook.getVersion());
+-    fieldAdded(change, "eventFilters", List.of(f2));
+-    fieldDeleted(change, "eventFilters", List.of(f1));
+-    webhook = updateAndCheckEntity(create, Response.Status.OK, ADMIN_AUTH_HEADERS, UpdateType.MINOR_UPDATE, change);
+-
+-    // Now remove the filter for entityCreated
+-    create.setEventFilters(List.of(f3));
+-    change = getChangeDescription(webhook.getVersion());
+-    fieldAdded(change, "eventFilters", List.of(f3));
+-    fieldDeleted(change, "eventFilters", List.of(f2));
+-    webhook = updateAndCheckEntity(create, Response.Status.OK, ADMIN_AUTH_HEADERS, UpdateType.MINOR_UPDATE, change);
+-
+-    // Now remove the filter for entityDeleted
+-    create.setEventFilters(List.of(f4));
+-    change = getChangeDescription(webhook.getVersion());
+-    fieldAdded(change, "eventFilters", List.of(f4));
+-    fieldDeleted(change, "eventFilters", List.of(f3));
+-    webhook = updateAndCheckEntity(create, Response.Status.OK, ADMIN_AUTH_HEADERS, UpdateType.MINOR_UPDATE, change);
+-
+-    deleteEntity(webhook.getId(), ADMIN_AUTH_HEADERS);
+-  }
+-
+-  @Override
+-  public CreateWebhook createRequest(String name) {
+-    String uri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook/ignore";
+-    return new CreateWebhook()
+-        .withName(name)
+-        .withEventFilters(ALL_EVENTS_FILTER)
+-        .withEndpoint(URI.create(uri))
+-        .withBatchSize(100)
+-        .withEnabled(false)
+-        .withSecretKey("webhookTest");
+-  }
+-
+-  @Override
+-  public void validateCreatedEntity(Webhook webhook, CreateWebhook createRequest, Map<String, String> authHeaders) {
+-    assertEquals(createRequest.getName(), webhook.getName());
+-    List<EventFilter> filters = createRequest.getEventFilters();
+-    assertEquals(filters, webhook.getEventFilters());
+-  }
+-
+-  @Override
+-  public void compareEntities(Webhook expected, Webhook updated, Map<String, String> authHeaders) {
+-    // Patch not supported
+-  }
+-
+-  @Override
+-  public Webhook validateGetWithDifferentFields(Webhook entity, boolean byName) {
+-    return entity; // Nothing to validate
+-  }
+-
+-  @Override
+-  public void assertFieldChange(String fieldName, Object expected, Object actual) throws IOException {
+-    if (expected == actual) {
+-      return;
+-    }
+-    switch (fieldName) {
+-      case "eventFilters":
+-        List<EventFilter> expectedFilters = (List<EventFilter>) expected;
+-        List<EventFilter> actualFilters =
+-            JsonUtils.readValue(actual.toString(), new TypeReference<ArrayList<EventFilter>>() {});
+-        assertEquals(expectedFilters, actualFilters);
+-        break;
+-      case "endPoint":
+-        URI expectedEndpoint = (URI) expected;
+-        URI actualEndpoint = URI.create(actual.toString());
+-        assertEquals(expectedEndpoint, actualEndpoint);
+-        break;
+-      case "status":
+-        assertEquals(expected, Status.fromValue(actual.toString()));
+-        break;
+-      default:
+-        assertCommonFieldChange(fieldName, expected, actual);
+-        break;
+-    }
+-  }
+-
+-  @Test
+-  void put_entityNonEmptyDescriptionUpdate_200(TestInfo test) {
+-    // TODO fix this test as currently bot can't update webhook
+-  }
+-
+-  /**
+-   * Before a test for every entity resource, create a webhook subscription. At the end of the test, ensure all events
+-   * are delivered over web subscription comparing it with number of events stored in the system.
+-   */
+-  public void startWebhookSubscription() throws IOException {
+-    // Valid webhook callback
+-    String baseUri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook/healthy";
+-    createWebhook("healthy", baseUri);
+-  }
+-
+-  /** Start webhook subscription for given entity and various event types */
+-  public void startWebhookEntitySubscriptions(String entity) throws IOException {
+-    String baseUri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook/filterBased";
+-
+-    // Create webhook with endpoint api/v1/test/webhook/entityCreated/<entity> to receive entityCreated events
+-    String name = EventType.ENTITY_CREATED + ":" + entity;
+-    String uri = baseUri + "/" + EventType.ENTITY_CREATED + "/" + entity;
+-
+-    Set<String> allFilter = new HashSet<>();
+-    allFilter.add("all");
+-    Filters createFilter =
+-        new Filters().withEventType(EventType.ENTITY_CREATED).withInclude(allFilter).withExclude(new HashSet<>());
+-    EventFilter f1 = new EventFilter().withEntityType(entity).withFilters(List.of(createFilter));
+-    createWebhook(name, uri, List.of(f1));
+-
+-    // Create webhook with endpoint api/v1/test/webhook/entityUpdated/<entity> to receive entityUpdated events
+-    name = EventType.ENTITY_UPDATED + ":" + entity;
+-    uri = baseUri + "/" + EventType.ENTITY_UPDATED + "/" + entity;
+-    Filters updateFilter =
+-        new Filters().withEventType(EventType.ENTITY_UPDATED).withInclude(allFilter).withExclude(new HashSet<>());
+-    EventFilter f2 = new EventFilter().withEntityType(entity).withFilters(List.of(updateFilter));
+-    createWebhook(name, uri, List.of(f2));
+-
+-    // TODO entity deleted events
+-  }
+-
+-  /**
+-   * At the end of the test, ensure all events are delivered over web subscription comparing it with number of events
+-   * stored in the system.
+-   */
+-  public void validateWebhookEvents() throws HttpResponseException {
+-    // Check the healthy callback server received all the change events
+-    EventDetails details = webhookCallbackResource.getEventDetails("healthy");
+-    assertNotNull(details);
+-    ConcurrentLinkedQueue<ChangeEvent> callbackEvents = details.getEvents();
+-    assertNotNull(callbackEvents);
+-    assertNotNull(callbackEvents.peek());
+-    waitAndCheckForEvents("*", "*", "*", callbackEvents.peek().getTimestamp(), callbackEvents, 40);
+-    assertWebhookStatusSuccess("healthy");
+-  }
+-
+-  /** At the end of the test, ensure all events are delivered for the combination of entity and eventTypes */
+-  public void validateWebhookEntityEvents(String entity) throws HttpResponseException {
+-    // Check the healthy callback server received all the change events
+-    // For the entity all the webhooks registered for created events have the right number of events
+-    List<ChangeEvent> callbackEvents =
+-        webhookCallbackResource.getEntityCallbackEvents(EventType.ENTITY_CREATED, entity);
+-    assertTrue(callbackEvents.size() > 1);
+-    long timestamp = callbackEvents.get(0).getTimestamp();
+-    waitAndCheckForEvents(entity, null, null, timestamp, callbackEvents, 30);
+-
+-    // For the entity all the webhooks registered for updated events have the right number of events
+-    callbackEvents = webhookCallbackResource.getEntityCallbackEvents(EventType.ENTITY_UPDATED, entity);
+-    // Use previous date if no update events
+-    timestamp = callbackEvents.size() > 0 ? callbackEvents.get(0).getTimestamp() : timestamp;
+-    waitAndCheckForEvents(null, entity, null, timestamp, callbackEvents, 30);
+-
+-    // TODO add delete event support
+-  }
+-
+-  @Test
+-  void testDifferentTypesOfWebhooks() throws IOException {
+-    String baseUri = "http://localhost:" + APP.getLocalPort() + "/api/v1/test/webhook";
+-
+-    // Create multiple webhooks each with different type of response to callback
+-    Webhook w1 = createWebhook("slowServer", baseUri + "/simulate/slowServer"); // Callback response 1 second slower
+-    Webhook w2 = createWebhook("callbackTimeout", baseUri + "/simulate/timeout"); // Callback response 12 seconds slower
+-    Webhook w3 = createWebhook("callbackResponse300", baseUri + "/simulate/300"); // 3xx response
+-    Webhook w4 = createWebhook("callbackResponse400", baseUri + "/simulate/400"); // 4xx response
+-    Webhook w5 = createWebhook("callbackResponse500", baseUri + "/simulate/500"); // 5xx response
+-    Webhook w6 = createWebhook("invalidEndpoint", "http://invalidUnknownHost"); // Invalid URL
+-
+-    // Now check state of webhooks created
+-    EventDetails details = waitForFirstEvent("simulate-slowServer", 25);
+-    ConcurrentLinkedQueue<ChangeEvent> callbackEvents = details.getEvents();
+-    assertNotNull(callbackEvents.peek());
+-
+-    waitAndCheckForEvents("*", "*", "*", callbackEvents.peek().getTimestamp(), callbackEvents, 30);
+-
+-    // Check all webhook status
+-    assertWebhookStatusSuccess("slowServer");
+-    assertWebhookStatus("callbackResponse300", Status.FAILED, 301, "Moved Permanently");
+-    assertWebhookStatus("callbackResponse400", Status.AWAITING_RETRY, 400, "Bad Request");
+-    assertWebhookStatus("callbackResponse500", Status.AWAITING_RETRY, 500, "Internal Server Error");
+-    assertWebhookStatus("invalidEndpoint", Status.FAILED, null, "UnknownHostException");
+-
+-    // Delete all webhooks
+-    deleteEntity(w1.getId(), ADMIN_AUTH_HEADERS);
+-    deleteEntity(w2.getId(), ADMIN_AUTH_HEADERS);
+-    deleteEntity(w3.getId(), ADMIN_AUTH_HEADERS);
+-    deleteEntity(w4.getId(), ADMIN_AUTH_HEADERS);
+-    deleteEntity(w5.getId(), ADMIN_AUTH_HEADERS);
+-    deleteEntity(w6.getId(), ADMIN_AUTH_HEADERS);
+-  }
+-
+-  public Webhook createWebhook(String name, String uri) throws IOException {
+-    return createWebhook(name, uri, ALL_EVENTS_FILTER);
+-  }
+-
+-  public Webhook createWebhook(String name, String uri, List<EventFilter> filters) throws IOException {
+-    CreateWebhook createWebhook =
+-        createRequest(name, "", "", null).withEndpoint(URI.create(uri)).withEventFilters(filters).withEnabled(true);
+-    return createAndCheckEntity(createWebhook, ADMIN_AUTH_HEADERS);
+-  }
+-
+-  public void assertWebhookStatusSuccess(String name) throws HttpResponseException {
+-    Webhook webhook = getEntityByName(name, null, "", ADMIN_AUTH_HEADERS);
+-    assertEquals(Status.ACTIVE, webhook.getStatus());
+-    assertNull(webhook.getFailureDetails());
+-  }
+-
+-  public void assertWebhookStatus(String name, Status status, Integer statusCode, String failedReason)
+-      throws HttpResponseException {
+-    Webhook webhook = getEntityByName(name, null, "", ADMIN_AUTH_HEADERS);
+-    assertEquals(status, webhook.getStatus());
+-    assertEquals(statusCode, webhook.getFailureDetails().getLastFailedStatusCode());
+-    assertEquals(failedReason, webhook.getFailureDetails().getLastFailedReason());
+-  }
+-
+-  private static AtomicBoolean receivedAllEvents(List<ChangeEvent> expected, Collection<ChangeEvent> callbackEvents) {
+-    LOG.info("expected size {} callback events size {}", expected.size(), callbackEvents.size());
+-    return new AtomicBoolean(expected.size() == callbackEvents.size());
+-  }
+-
+-  public void waitAndCheckForEvents(
+-      String entityCreated,
+-      String entityUpdated,
+-      String entityDeleted,
+-      long timestamp,
+-      Collection<ChangeEvent> callbackEvents,
+-      int iteration)
+-      throws HttpResponseException {
+-    List<ChangeEvent> expected =
+-        getChangeEvents(entityCreated, entityUpdated, entityDeleted, timestamp, ADMIN_AUTH_HEADERS).getData();
+-    Awaitility.await()
+-        .pollInterval(Duration.ofMillis(100L))
+-        .atMost(Duration.ofMillis(iteration * 100L))
+-        .untilTrue(receivedAllEvents(expected, callbackEvents));
+-    if (expected.size() != callbackEvents.size()) { // Failed to receive all the events
+-      expected.forEach(
+-          c1 ->
+-              LOG.info(
+-                  "expected {}:{}:{}:{}", c1.getTimestamp(), c1.getEventType(), c1.getEntityType(), c1.getEntityId()));
+-      callbackEvents.forEach(
+-          c1 ->
+-              LOG.info(
+-                  "received {}:{}:{}:{}", c1.getTimestamp(), c1.getEventType(), c1.getEntityType(), c1.getEntityId()));
+-    }
+-    assertEquals(expected.size(), callbackEvents.size());
+-  }
+-
+-  public EventDetails waitForFirstEvent(String endpoint, int iteration) {
+-    Awaitility.await()
+-        .pollInterval(Duration.ofMillis(100L))
+-        .atMost(Duration.ofMillis(iteration * 100L))
+-        .untilFalse(hasEventOccurred(endpoint));
+-    EventDetails details = webhookCallbackResource.getEventDetails(endpoint);
+-    LOG.info("Returning for endpoint {} eventDetails {}", endpoint, details);
+-    return details;
+-  }
+-
+-  private AtomicBoolean hasEventOccurred(String endpoint) {
+-    EventDetails details = webhookCallbackResource.getEventDetails(endpoint);
+-    return new AtomicBoolean(details != null && details.getEvents() != null && details.getEvents().size() <= 0);
+-  }
+-}
+diff --git a/openmetadata-spec/src/main/resources/json/schema/api/events/createWebhook.json b/openmetadata-spec/src/main/resources/json/schema/api/events/createWebhook.json
+deleted file mode 100644
+index 6abd1e778..000000000
+--- a/openmetadata-spec/src/main/resources/json/schema/api/events/createWebhook.json
++++ /dev/null
+@@ -1,61 +0,0 @@
+-{
+-  "$id": "https://open-metadata.org/schema/api/events/createWebhook.json",
+-  "$schema": "http://json-schema.org/draft-07/schema#",
+-  "title": "CreateWebhook",
+-  "description": "This schema defines webhook for receiving events from OpenMetadata",
+-  "type": "object",
+-  "javaType": "org.openmetadata.schema.api.events.CreateWebhook",
+-  "javaInterfaces": ["org.openmetadata.schema.CreateEntity"],
+-
+-  "properties": {
+-    "name": {
+-      "description": "Unique name of the application receiving webhook events.",
+-      "$ref": "../../type/basic.json#/definitions/entityName"
+-    },
+-    "displayName": {
+-      "description": "Display Name that identifies this webhook.",
+-      "type": "string"
+-    },
+-    "description": {
+-      "description": "Description of the application",
+-      "$ref": "../../type/basic.json#/definitions/markdown"
+-    },
+-    "endpoint": {
+-      "description": "Endpoint to receive the webhook events over POST requests.",
+-      "type": "string",
+-      "format": "uri"
+-    },
+-    "eventFilters": {
+-      "description": "Event filters to filter for desired events.",
+-      "type": "array",
+-      "items": {
+-        "$ref": "../../type/changeEvent.json#/definitions/eventFilter"
+-      }
+-    },
+-    "batchSize": {
+-      "description": "Maximum number of events sent in a batch (Default 10).",
+-      "type": "integer",
+-      "default": 10
+-    },
+-    "timeout": {
+-      "description": "Connection timeout in seconds. (Default = 10s)",
+-      "type": "integer",
+-      "default": 10
+-    },
+-    "enabled": {
+-      "description": "When set to `true`, the webhook event notification is enabled. Set it to `false` to disable the subscription. (Default `true`)",
+-      "type": "boolean",
+-      "default": true
+-    },
+-    "secretKey": {
+-      "description": "Secret set by the webhook client used for computing HMAC SHA256 signature of webhook payload and sent in `X-OM-Signature` header in POST requests to publish the events.",
+-      "type": "string"
+-    },
+-    "webhookType": {
+-      "description": "Type of webhook slack,generic,msteams etc",
+-      "$ref": "../../entity/events/webhook.json#/definitions/webhookType"
+-    }
+-  },
+-  "required": ["name", "endpoint", "eventFilters"],
+-  "additionalProperties": false
+-}
+diff --git a/openmetadata-spec/src/main/resources/json/schema/entity/events/webhook.json b/openmetadata-spec/src/main/resources/json/schema/entity/events/webhook.json
+deleted file mode 100644
+index 5faa29444..000000000
+--- a/openmetadata-spec/src/main/resources/json/schema/entity/events/webhook.json
++++ /dev/null
+@@ -1,152 +0,0 @@
+-{
+-  "$id": "https://open-metadata.org/schema/entity/events/webhook.json",
+-  "$schema": "http://json-schema.org/draft-07/schema#",
+-  "title": "Webhook",
+-  "description": "This schema defines webhook for receiving events from OpenMetadata.",
+-  "type": "object",
+-  "javaType": "org.openmetadata.schema.type.Webhook",
+-  "javaInterfaces": ["org.openmetadata.schema.EntityInterface"],
+-  "definitions": {
+-    "webhookType": {
+-      "description": "Type of webhook slack, generic, msteams, etc.",
+-      "type": "string",
+-      "javaType": "org.openmetadata.schema.type.WebhookType",
+-      "default": "generic",
+-      "enum": ["slack", "generic", "msteams"],
+-      "javaEnums": [
+-        {
+-          "name": "slack"
+-        },
+-        {
+-          "name": "generic"
+-        },
+-        {
+-          "name": "msteams"
+-        }
+-      ]
+-    }
+-  },
+-  "properties": {
+-    "id": {
+-      "description": "Unique ID associated with a webhook subscription.",
+-      "$ref": "../../type/basic.json#/definitions/uuid"
+-    },
+-    "name": {
+-      "description": "Unique name of the application receiving webhook events.",
+-      "$ref": "../../type/basic.json#/definitions/entityName"
+-    },
+-    "fullyQualifiedName": {
+-      "description": "FullyQualifiedName same as `name`.",
+-      "$ref": "../../type/basic.json#/definitions/fullyQualifiedEntityName"
+-    },
+-    "displayName": {
+-      "description": "Display Name that identifies this webhook.",
+-      "type": "string"
+-    },
+-    "webhookType": {
+-      "description": "Type of webhook slack, generic, msteams, etc.",
+-      "$ref": "#/definitions/webhookType"
+-    },
+-    "description": {
+-      "description": "Description of the application.",
+-      "$ref": "../../type/basic.json#/definitions/markdown"
+-    },
+-    "endpoint": {
+-      "description": "Endpoint to receive the webhook events over POST requests.",
+-      "type": "string",
+-      "format": "uri"
+-    },
+-    "eventFilters": {
+-      "description": "Endpoint to receive the webhook events over POST requests.",
+-      "type": "array",
+-      "items": {
+-        "$ref": "../../type/changeEvent.json#/definitions/eventFilter"
+-      }
+-    },
+-    "batchSize": {
+-      "description": "Maximum number of events sent in a batch (Default 10).",
+-      "type": "integer",
+-      "default": 10
+-    },
+-    "timeout": {
+-      "description": "Connection timeout in seconds. (Default 10s).",
+-      "type": "integer",
+-      "default": 10
+-    },
+-    "readTimeout": {
+-      "description": "Read timeout in seconds. (Default 12s).",
+-      "type": "integer",
+-      "default": 12
+-    },
+-    "enabled": {
+-      "description": "When set to `true`, the webhook event notification is enabled. Set it to `false` to disable the subscription. (Default `true`).",
+-      "type": "boolean",
+-      "default": true
+-    },
+-    "secretKey": {
+-      "description": "Secret set by the webhook client used for computing HMAC SHA256 signature of webhook payload and sent in `X-OM-Signature` header in POST requests to publish the events.",
+-      "type": "string"
+-    },
+-    "version": {
+-      "description": "Metadata version of the entity.",
+-      "$ref": "../../type/entityHistory.json#/definitions/entityVersion"
+-    },
+-    "updatedAt": {
+-      "description": "Last update time corresponding to the new version of the entity in Unix epoch time milliseconds.",
+-      "$ref": "../../type/basic.json#/definitions/timestamp"
+-    },
+-    "updatedBy": {
+-      "description": "User who made the update.",
+-      "type": "string"
+-    },
+-    "status": {
+-      "description": "Status is `disabled`, when webhook was created with `enabled` set to false and it never started publishing events. Status is `active` when webhook is normally functioning and 200 OK response was received for callback notification. Status is `failed` on bad callback URL, connection failures, `1xx`, and `3xx` response was received for callback notification. Status is `awaitingRetry` when previous attempt at callback timed out or received `4xx`, `5xx` response. Status is `retryLimitReached` after all retries fail.",
+-      "type": "string",
+-      "enum": [
+-        "disabled",
+-        "failed",
+-        "retryLimitReached",
+-        "awaitingRetry",
+-        "active"
+-      ]
+-    },
+-    "failureDetails": {
+-      "description": "Failure details are set only when `status` is not `success`.",
+-      "type": "object",
+-      "javaType": "org.openmetadata.schema.type.FailureDetails",
+-      "properties": {
+-        "lastSuccessfulAt": {
+-          "description": "Last non-successful callback time in UNIX UTC epoch time in milliseconds.",
+-          "$ref": "../../type/basic.json#/definitions/timestamp"
+-        },
+-        "lastFailedAt": {
+-          "description": "Last non-successful callback time in UNIX UTC epoch time in milliseconds.",
+-          "$ref": "../../type/basic.json#/definitions/timestamp"
+-        },
+-        "lastFailedStatusCode": {
+-          "description": "Last non-successful activity response code received during callback.",
+-          "type": "integer"
+-        },
+-        "lastFailedReason": {
+-          "description": "Last non-successful activity response reason received during callback.",
+-          "type": "string"
+-        },
+-        "nextAttempt": {
+-          "description": "Next retry will be done at this time in Unix epoch time milliseconds. Only valid is `status` is `awaitingRetry`.",
+-          "$ref": "../../type/basic.json#/definitions/timestamp"
+-        }
+-      },
+-      "additionalProperties": false
+-    },
+-    "href": {
+-      "description": "Link to this webhook resource.",
+-      "$ref": "../../type/basic.json#/definitions/href"
+-    },
+-    "changeDescription": {
+-      "description": "Change that lead to this version of the entity.",
+-      "$ref": "../../type/entityHistory.json#/definitions/changeDescription"
+-    }
+-  },
+-  "required": ["id", "name", "endpoint", "eventFilters"],
+-  "additionalProperties": false
+-}
+diff --git a/openmetadata-ui/src/main/resources/ui/src/axiosAPIs/webhookAPI.ts b/openmetadata-ui/src/main/resources/ui/src/axiosAPIs/webhookAPI.ts
+index a1c757ddf..fe4ecd4e6 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/axiosAPIs/webhookAPI.ts
++++ b/openmetadata-ui/src/main/resources/ui/src/axiosAPIs/webhookAPI.ts
+@@ -12,10 +12,10 @@
+  */
+ 
+ import {
+-  CreateWebhook,
+-  WebhookType,
+-} from '../generated/api/events/createWebhook';
+-import { Webhook } from '../generated/entity/events/webhook';
++  CreateEventConfig,
++  EventConfigType,
++} from '../generated/api/events/createEventConfig';
++import { EventConfig } from '../generated/entity/events/eventConfig';
+ import { Paging } from '../generated/type/paging';
+ import { getURLWithQueryFields } from '../utils/APIUtils';
+ import APIClient from './index';
+@@ -23,7 +23,7 @@ import APIClient from './index';
+ export const getWebhooks = async (
+   paging?: string,
+   arrQueryFields?: string,
+-  params?: { limit: number; webhookType?: WebhookType }
++  params?: { limit: number; eventConfigType?: EventConfigType }
+ ) => {
+   const url = getURLWithQueryFields(
+     '/webhook',
+@@ -31,7 +31,7 @@ export const getWebhooks = async (
+     paging ? paging : undefined
+   );
+ 
+-  const response = await APIClient.get<{ data: Webhook[]; paging: Paging }>(
++  const response = await APIClient.get<{ data: EventConfig[]; paging: Paging }>(
+     url,
+     {
+       params,
+@@ -41,18 +41,18 @@ export const getWebhooks = async (
+   return response.data;
+ };
+ 
+-export const addWebhook = async (data: CreateWebhook) => {
++export const addWebhook = async (data: CreateEventConfig) => {
+   const url = '/webhook';
+ 
+-  const response = await APIClient.post<CreateWebhook>(url, data);
++  const response = await APIClient.post<CreateEventConfig>(url, data);
+ 
+   return response.data;
+ };
+ 
+-export const updateWebhook = async (data: CreateWebhook) => {
++export const updateWebhook = async (data: CreateEventConfig) => {
+   const url = '/webhook';
+ 
+-  const response = await APIClient.put<CreateWebhook>(url, data);
++  const response = await APIClient.put<CreateEventConfig>(url, data);
+ 
+   return response.data;
+ };
+@@ -60,7 +60,7 @@ export const updateWebhook = async (data: CreateWebhook) => {
+ export const deleteWebhook = async (id: string) => {
+   const url = `/webhook/${id}`;
+ 
+-  const response = await APIClient.delete<Webhook>(url);
++  const response = await APIClient.delete<EventConfig>(url);
+ 
+   return response.data;
+ };
+@@ -68,7 +68,7 @@ export const deleteWebhook = async (id: string) => {
+ export const getWebhookByName = async (name: string) => {
+   const url = `/webhook/name/${name}`;
+ 
+-  const response = await APIClient.get<Webhook>(url);
++  const response = await APIClient.get<EventConfig>(url);
+ 
+   return response.data;
+ };
+@@ -76,7 +76,7 @@ export const getWebhookByName = async (name: string) => {
+ export const getWebhookById = async (id: string) => {
+   const url = `/webhook/${id}`;
+ 
+-  const response = await APIClient.get<Webhook>(url);
++  const response = await APIClient.get<EventConfig>(url);
+ 
+   return response.data;
+ };
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.interface.ts b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.interface.ts
+index c99a89472..654cee84e 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.interface.ts
++++ b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.interface.ts
+@@ -14,20 +14,20 @@
+ import { LoadingState } from 'Models';
+ import { FormSubmitType } from '../../enums/form.enum';
+ import {
+-  CreateWebhook,
+-  WebhookType,
+-} from '../../generated/api/events/createWebhook';
+-import { Webhook } from '../../generated/entity/events/webhook';
++  CreateEventConfig,
++  EventConfigType,
++} from '../../generated/api/events/createEventConfig';
++import { EventConfig } from '../../generated/entity/events/eventConfig';
+ 
+ export interface AddWebhookProps {
+-  data?: Webhook;
++  data?: EventConfig;
+   header: string;
+   mode: FormSubmitType;
+   saveState?: LoadingState;
+   deleteState?: LoadingState;
+   allowAccess?: boolean;
+-  webhookType?: WebhookType;
++  eventConfigType?: EventConfigType;
+   onCancel: () => void;
+   onDelete?: (id: string) => void;
+-  onSave: (data: CreateWebhook) => void;
++  onSave: (data: CreateEventConfig) => void;
+ }
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.test.tsx b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.test.tsx
+index 4bdeff4c1..45ca70e9e 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.test.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.test.tsx
+@@ -24,7 +24,10 @@ import {
+ import React from 'react';
+ import { MemoryRouter } from 'react-router';
+ import { FormSubmitType } from '../../enums/form.enum';
+-import { Webhook, WebhookType } from '../../generated/entity/events/webhook';
++import {
++  EventConfig,
++  EventConfigType,
++} from '../../generated/entity/events/eventConfig';
+ import AddWebhook from './AddWebhook';
+ import { AddWebhookProps } from './AddWebhook.interface';
+ 
+@@ -377,10 +380,10 @@ describe.skip('Test AddWebhook component', () => {
+       const { container } = render(
+         <AddWebhook
+           {...addWebhookProps}
+-          data={mockData as Webhook}
++          data={mockData as EventConfig}
++          eventConfigType={EventConfigType.Generic}
+           header="Edit Webhook"
+           mode={FormSubmitType.EDIT}
+-          webhookType={WebhookType.Generic}
+         />,
+         {
+           wrapper: MemoryRouter,
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.tsx b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.tsx
+index 1a22f5385..454abe8a1 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/AddWebhook.tsx
+@@ -40,10 +40,10 @@ import { UrlEntityCharRegEx } from '../../constants/regex.constants';
+ import { FormSubmitType } from '../../enums/form.enum';
+ import { PageLayoutType } from '../../enums/layout.enum';
+ import {
+-  CreateWebhook,
++  CreateEventConfig,
+   EventFilter,
+-} from '../../generated/api/events/createWebhook';
+-import { WebhookType } from '../../generated/entity/events/webhook';
++} from '../../generated/api/events/createEventConfig';
++import { EventConfigType } from '../../generated/entity/events/eventConfig';
+ import { Operation } from '../../generated/entity/policies/policy';
+ import {
+   errorMsg,
+@@ -87,7 +87,7 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
+   saveState = 'initial',
+   deleteState = 'initial',
+   allowAccess = true,
+-  webhookType = WebhookType.Generic,
++  eventConfigType = EventConfigType.Generic,
+   onCancel,
+   onDelete,
+   onSave,
+@@ -224,7 +224,7 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
+ 
+   const handleSave = () => {
+     if (validateForm()) {
+-      const oData: CreateWebhook = {
++      const oData: CreateEventConfig = {
+         name,
+         description: markdownRef.current?.getEditorContent() || undefined,
+         endpoint: endpointUrl,
+@@ -233,7 +233,7 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
+         timeout: connectionTimeout,
+         enabled: active,
+         secretKey,
+-        webhookType,
++        eventConfigType,
+       };
+ 
+       onSave(oData);
+@@ -319,12 +319,12 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
+   const fetchRightPanel = useCallback(() => {
+     return (
+       <div className="tw-px-2">
+-        <CardV1 heading={CONFIGURE_TEXT[webhookType].heading} id="webhook">
+-          {CONFIGURE_TEXT[webhookType].body}
++        <CardV1 heading={CONFIGURE_TEXT[eventConfigType].heading} id="webhook">
++          {CONFIGURE_TEXT[eventConfigType].body}
+         </CardV1>
+       </div>
+     );
+-  }, [webhookType]);
++  }, [eventConfigType]);
+ 
+   return (
+     <div className="add-webhook-container">
+@@ -338,10 +338,13 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
+                 url: ROUTES.SETTINGS,
+               },
+               {
+-                name: webhookType === WebhookType.Slack ? 'Slack' : 'Webhook',
++                name:
++                  eventConfigType === EventConfigType.Slack
++                    ? 'Slack'
++                    : 'EventConfig',
+                 url: getSettingPath(
+                   GlobalSettingsMenuCategory.INTEGRATIONS,
+-                  webhookType === WebhookType.Slack
++                  eventConfigType === EventConfigType.Slack
+                     ? GlobalSettingOptions.SLACK
+                     : GlobalSettingOptions.WEBHOOK
+                 ),
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/EventFilterTree.component.tsx b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/EventFilterTree.component.tsx
+index a8c31f8e0..e94bc978e 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/EventFilterTree.component.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/EventFilterTree.component.tsx
+@@ -3,7 +3,7 @@ import { cloneDeep, isEmpty, map, startCase } from 'lodash';
+ import React, { Key, useEffect, useMemo, useState } from 'react';
+ import { getInitialFilters } from '../../axiosAPIs/eventFiltersAPI';
+ import { TERM_ALL } from '../../constants/constants';
+-import { EventFilter } from '../../generated/api/events/createWebhook';
++import { EventFilter } from '../../generated/api/events/createEventConfig';
+ import { Filters } from '../../generated/settings/settings';
+ import { getEventFilterFromTree } from '../../pages/ActivityFeedSettingsPage/ActivityFeedSettingsPage.utils';
+ import './../../pages/ActivityFeedSettingsPage/ActivityFeedSettingsPage.style.less';
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/WebhookConstants.ts b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/WebhookConstants.ts
+index 477a48f76..96102841e 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/WebhookConstants.ts
++++ b/openmetadata-ui/src/main/resources/ui/src/components/AddWebhook/WebhookConstants.ts
+@@ -12,7 +12,7 @@
+  */
+ 
+ import { startCase } from 'lodash';
+-import { EventFilter, Status } from '../../generated/entity/events/webhook';
++import { EventFilter, Status } from '../../generated/entity/events/eventConfig';
+ 
+ export const CREATE_EVENTS_DEFAULT_VALUE = {
+   eventType: 'entityCreated',
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhookTable.test.tsx b/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhookTable.test.tsx
+index 13a7b9510..06f64af26 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhookTable.test.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhookTable.test.tsx
+@@ -14,7 +14,7 @@
+ import { render, screen } from '@testing-library/react';
+ import React from 'react';
+ import { MemoryRouter } from 'react-router-dom';
+-import { Webhook } from '../../generated/entity/events/webhook';
++import { EventConfig } from '../../generated/entity/events/eventConfig';
+ import WebhookTable from './WebhookTable';
+ 
+ jest.mock('../../constants/HelperTextUtil', () => ({
+@@ -59,7 +59,7 @@ const mockWebhooks = [
+     id: '916605d8-55e4-411f-909d-8237eecaf9d5',
+     name: 'TestingSlack',
+     fullyQualifiedName: 'TestingSlack',
+-    webhookType: 'slack',
++    eventConfigType: 'slack',
+     description: '',
+     endpoint: '',
+     eventFilters: [
+@@ -259,7 +259,7 @@ const mockWebhooks = [
+     updatedBy: 'sachin.c',
+     status: 'active',
+     href: 'http://localhost:8585/api/v1/webhook/916605d8-55e4-411f-909d-8237eecaf9d5',
+-  } as Webhook,
++  } as EventConfig,
+ ];
+ 
+ const onEdit = jest.fn();
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhookTable.tsx b/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhookTable.tsx
+index b3c447a80..fcac24a72 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhookTable.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhookTable.tsx
+@@ -18,7 +18,7 @@ import { startCase } from 'lodash';
+ import React, { FC, useMemo } from 'react';
+ import { Link } from 'react-router-dom';
+ import { NO_PERMISSION_FOR_ACTION } from '../../constants/HelperTextUtil';
+-import { Webhook } from '../../generated/entity/events/webhook';
++import { EventConfig } from '../../generated/entity/events/eventConfig';
+ import { Operation } from '../../generated/entity/policies/policy';
+ import { getEntityName, getHostNameFromURL } from '../../utils/CommonUtils';
+ import { checkPermission } from '../../utils/PermissionsUtils';
+@@ -35,9 +35,9 @@ const ICON: { [key: string]: string } = {
+ };
+ 
+ interface Props {
+-  webhookList: Webhook[];
++  webhookList: EventConfig[];
+   onEdit?: (name: string) => void;
+-  onDelete?: (name: Webhook) => void;
++  onDelete?: (name: EventConfig) => void;
+ }
+ 
+ const WebhookTable: FC<Props> = ({ onEdit, webhookList, onDelete }) => {
+@@ -61,7 +61,7 @@ const WebhookTable: FC<Props> = ({ onEdit, webhookList, onDelete }) => {
+     [permissions]
+   );
+ 
+-  const columns: ColumnsType<Webhook> = useMemo(() => {
++  const columns: ColumnsType<EventConfig> = useMemo(() => {
+     return [
+       {
+         title: 'Name',
+@@ -72,7 +72,7 @@ const WebhookTable: FC<Props> = ({ onEdit, webhookList, onDelete }) => {
+           <div className="tw-flex tw-items-center">
+             <SVGIcons
+               alt="webhook"
+-              icon={ICON[record.webhookType as string]}
++              icon={ICON[record.eventConfigType as string]}
+               width="16"
+             />
+             <h6 className="tw-flex tw-items-center tw-m-0 tw-heading tw-pl-1">
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhooksV1.interface.ts b/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhooksV1.interface.ts
+index 4835453a3..f6acd5f7f 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhooksV1.interface.ts
++++ b/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhooksV1.interface.ts
+@@ -11,14 +11,14 @@
+  *  limitations under the License.
+  */
+ 
+-import { WebhookType } from '../../generated/api/events/createWebhook';
+-import { Status, Webhook } from '../../generated/entity/events/webhook';
++import { EventConfigType } from '../../generated/api/events/createEventConfig';
++import { Status, EventConfig } from '../../generated/entity/events/eventConfig';
+ import { Paging } from '../../generated/type/paging';
+ 
+ export interface WebhooksV1Props {
+-  data: Array<Webhook>;
++  data: Array<EventConfig>;
+   paging: Paging;
+-  webhookType?: WebhookType;
++  eventConfigType?: EventConfigType;
+   selectedStatus: Status[];
+   currentPage: number;
+   onAddWebhook: () => void;
+diff --git a/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhooksV1.tsx b/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhooksV1.tsx
+index bbd6cccba..199b5b448 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhooksV1.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/components/Webhooks/WebhooksV1.tsx
+@@ -20,8 +20,8 @@ import { deleteWebhook } from '../../axiosAPIs/webhookAPI';
+ import { PAGE_SIZE_MEDIUM } from '../../constants/constants';
+ import { WEBHOOK_DOCS } from '../../constants/docs.constants';
+ import { NO_PERMISSION_FOR_ACTION } from '../../constants/HelperTextUtil';
+-import { WebhookType } from '../../generated/api/events/createWebhook';
+-import { Webhook } from '../../generated/entity/events/webhook';
++import { EventConfigType } from '../../generated/api/events/createEventConfig';
++import { EventConfig } from '../../generated/entity/events/eventConfig';
+ import { Operation } from '../../generated/entity/policies/policy';
+ import { checkPermission } from '../../utils/PermissionsUtils';
+ import { showErrorToast } from '../../utils/ToastUtils';
+@@ -44,7 +44,7 @@ const WEBHOOKS_INTEGRATION: { [key: string]: string } = {
+ 
+ const WebhooksV1: FC<WebhooksV1Props> = ({
+   data = [],
+-  webhookType = WebhookType.Generic,
++  eventConfigType = EventConfigType.Generic,
+   paging,
+   selectedStatus = [],
+   onAddWebhook,
+@@ -53,8 +53,8 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
+   onStatusFilter,
+   currentPage,
+ }) => {
+-  const [filteredData, setFilteredData] = useState<Array<Webhook>>(data);
+-  const [selectedWebhook, setWebhook] = useState<Webhook>();
++  const [filteredData, setFilteredData] = useState<Array<EventConfig>>(data);
++  const [selectedWebhook, setWebhook] = useState<EventConfig>();
+ 
+   const { permissions } = usePermissionProvider();
+ 
+@@ -83,7 +83,7 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
+                 placement="left"
+                 title={
+                   addWebhookPermission
+-                    ? `Add ${WEBHOOKS_INTEGRATION[webhookType]}`
++                    ? `Add ${WEBHOOKS_INTEGRATION[eventConfigType]}`
+                     : NO_PERMISSION_FOR_ACTION
+                 }>
+                 <ButtonAntd
+@@ -96,7 +96,7 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
+                   size="small"
+                   type="primary"
+                   onClick={onAddWebhook}>
+-                  Add {WEBHOOKS_INTEGRATION[webhookType]}
++                  Add {WEBHOOKS_INTEGRATION[eventConfigType]}
+                 </ButtonAntd>
+               </Tooltip>
+             </p>
+@@ -130,7 +130,7 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
+   }, [data, selectedStatus]);
+ 
+   if (data.length === 0) {
+-    return fetchErrorPlaceHolder(WEBHOOKS_INTEGRATION[webhookType]);
++    return fetchErrorPlaceHolder(WEBHOOKS_INTEGRATION[eventConfigType]);
+   }
+ 
+   return (
+@@ -163,7 +163,7 @@ const WebhooksV1: FC<WebhooksV1Props> = ({
+                 theme="primary"
+                 variant="contained"
+                 onClick={onAddWebhook}>
+-                Add {WEBHOOKS_INTEGRATION[webhookType]}
++                Add {WEBHOOKS_INTEGRATION[eventConfigType]}
+               </Button>
+             </Tooltip>
+           </Space>
+diff --git a/openmetadata-ui/src/main/resources/ui/src/constants/constants.ts b/openmetadata-ui/src/main/resources/ui/src/constants/constants.ts
+index 26415dc29..471ff1cdf 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/constants/constants.ts
++++ b/openmetadata-ui/src/main/resources/ui/src/constants/constants.ts
+@@ -12,7 +12,7 @@
+  */
+ 
+ import { COOKIE_VERSION } from '../components/Modals/WhatsNewModal/whatsNewData';
+-import { WebhookType } from '../generated/api/events/createWebhook';
++import { EventConfigType } from '../generated/api/events/createEventConfig';
+ import { getSettingPath } from '../utils/RouterUtils';
+ import { getEncodedFqn } from '../utils/StringsUtils';
+ import { FQN_SEPARATOR_CHAR } from './char.constants';
+@@ -99,7 +99,7 @@ export const PLACEHOLDER_TASK_ID = ':taskId';
+ export const PLACEHOLDER_TAG_NAME = ':tagCategoryName';
+ export const PLACEHOLDER_SETTING_CATEGORY = ':settingCategory';
+ export const PLACEHOLDER_USER_BOT = ':bot';
+-export const PLACEHOLDER_WEBHOOK_TYPE = ':webhookType';
++export const PLACEHOLDER_WEBHOOK_TYPE = ':eventConfigType';
+ export const PLACEHOLDER_RULE_NAME = ':ruleName';
+ export const PLACEHOLDER_DASHBOARD_TYPE = ':dashboardType';
+ export const PLACEHOLDER_TEST_SUITE_FQN = ':testSuiteFQN';
+@@ -359,7 +359,7 @@ export const getDatabaseSchemaDetailsPath = (
+   return path;
+ };
+ 
+-export const getAddWebhookPath = (webhookType?: WebhookType) => {
++export const getAddWebhookPath = (webhookType?: EventConfigType) => {
+   let path = webhookType ? ROUTES.ADD_WEBHOOK_WITH_TYPE : ROUTES.ADD_WEBHOOK;
+   if (webhookType) {
+     path = path.replace(PLACEHOLDER_WEBHOOK_TYPE, webhookType);
+diff --git a/openmetadata-ui/src/main/resources/ui/src/pages/AddWebhookPage/AddWebhookPage.component.tsx b/openmetadata-ui/src/main/resources/ui/src/pages/AddWebhookPage/AddWebhookPage.component.tsx
+index fb8d38629..b952816a3 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/pages/AddWebhookPage/AddWebhookPage.component.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/pages/AddWebhookPage/AddWebhookPage.component.tsx
+@@ -26,9 +26,9 @@ import {
+ } from '../../constants/globalSettings.constants';
+ import { FormSubmitType } from '../../enums/form.enum';
+ import {
+-  CreateWebhook,
+-  WebhookType,
+-} from '../../generated/api/events/createWebhook';
++  CreateEventConfig,
++  EventConfigType,
++} from '../../generated/api/events/createEventConfig';
+ import { Operation } from '../../generated/entity/policies/policy';
+ import jsonData from '../../jsons/en';
+ import { checkPermission } from '../../utils/PermissionsUtils';
+@@ -43,10 +43,11 @@ const HEADER_TEXT_WEBHOOK: { [key: string]: string } = {
+ 
+ const AddWebhookPage: FunctionComponent = () => {
+   const history = useHistory();
+-  const params = useParams<{ webhookType?: WebhookType }>();
++  const params = useParams<{ eventConfigType?: EventConfigType }>();
+   const { permissions } = usePermissionProvider();
+ 
+-  const webhookType: WebhookType = params.webhookType ?? WebhookType.Generic;
++  const eventConfigType: EventConfigType =
++    params.eventConfigType ?? EventConfigType.Generic;
+   const [status, setStatus] = useState<LoadingState>('initial');
+ 
+   const createPermission = useMemo(
+@@ -56,8 +57,8 @@ const AddWebhookPage: FunctionComponent = () => {
+   );
+ 
+   const goToWebhooks = () => {
+-    switch (webhookType) {
+-      case WebhookType.Slack: {
++    switch (eventConfigType) {
++      case EventConfigType.Slack: {
+         history.push(
+           getSettingPath(
+             GlobalSettingsMenuCategory.INTEGRATIONS,
+@@ -68,7 +69,7 @@ const AddWebhookPage: FunctionComponent = () => {
+         break;
+       }
+ 
+-      case WebhookType.Msteams: {
++      case EventConfigType.Msteams: {
+         history.push(
+           getSettingPath(
+             GlobalSettingsMenuCategory.INTEGRATIONS,
+@@ -94,7 +95,7 @@ const AddWebhookPage: FunctionComponent = () => {
+     goToWebhooks();
+   };
+ 
+-  const handleSave = (data: CreateWebhook) => {
++  const handleSave = (data: CreateEventConfig) => {
+     setStatus('waiting');
+     addWebhook(data)
+       .then((res) => {
+@@ -119,10 +120,10 @@ const AddWebhookPage: FunctionComponent = () => {
+       <div className="tw-self-center">
+         <AddWebhook
+           allowAccess={createPermission}
+-          header={`Add ${HEADER_TEXT_WEBHOOK[webhookType]}`}
++          eventConfigType={eventConfigType}
++          header={`Add ${HEADER_TEXT_WEBHOOK[eventConfigType]}`}
+           mode={FormSubmitType.ADD}
+           saveState={status}
+-          webhookType={webhookType}
+           onCancel={handleCancel}
+           onSave={handleSave}
+         />
+diff --git a/openmetadata-ui/src/main/resources/ui/src/pages/EditWebhookPage/EditWebhookPage.component.tsx b/openmetadata-ui/src/main/resources/ui/src/pages/EditWebhookPage/EditWebhookPage.component.tsx
+index daab2b604..ffa8902a7 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/pages/EditWebhookPage/EditWebhookPage.component.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/pages/EditWebhookPage/EditWebhookPage.component.tsx
+@@ -30,8 +30,11 @@ import {
+   GlobalSettingsMenuCategory,
+ } from '../../constants/globalSettings.constants';
+ import { FormSubmitType } from '../../enums/form.enum';
+-import { CreateWebhook } from '../../generated/api/events/createWebhook';
+-import { Webhook, WebhookType } from '../../generated/entity/events/webhook';
++import { CreateEventConfig } from '../../generated/api/events/createEventConfig';
++import {
++  EventConfig,
++  EventConfigType,
++} from '../../generated/entity/events/eventConfig';
+ import { Operation } from '../../generated/entity/policies/policy';
+ import jsonData from '../../jsons/en';
+ import { checkPermission } from '../../utils/PermissionsUtils';
+@@ -49,7 +52,7 @@ const EditWebhookPage: FunctionComponent = () => {
+   const history = useHistory();
+   const { permissions } = usePermissionProvider();
+   const [isLoading, setIsLoading] = useState<boolean>(true);
+-  const [webhookData, setWebhookData] = useState<Webhook>();
++  const [webhookData, setWebhookData] = useState<EventConfig>();
+   const [status, setStatus] = useState<LoadingState>('initial');
+   const [deleteStatus, setDeleteStatus] = useState<LoadingState>('initial');
+ 
+@@ -83,12 +86,12 @@ const EditWebhookPage: FunctionComponent = () => {
+ 
+   const goToWebhooks = () => {
+     let type = GlobalSettingOptions.WEBHOOK;
+-    switch (webhookData?.webhookType) {
+-      case WebhookType.Msteams:
++    switch (webhookData?.eventConfigType) {
++      case EventConfigType.Msteams:
+         type = GlobalSettingOptions.MSTEAMS;
+ 
+         break;
+-      case WebhookType.Slack:
++      case EventConfigType.Slack:
+         type = GlobalSettingOptions.SLACK;
+ 
+         break;
+@@ -106,7 +109,7 @@ const EditWebhookPage: FunctionComponent = () => {
+     goToWebhooks();
+   };
+ 
+-  const handleSave = (data: CreateWebhook) => {
++  const handleSave = (data: CreateEventConfig) => {
+     setStatus('waiting');
+     const { name, secretKey } = webhookData || data;
+     updateWebhook({ ...data, name, secretKey })
+@@ -159,12 +162,14 @@ const EditWebhookPage: FunctionComponent = () => {
+             allowAccess={createPermission || editPermission}
+             data={webhookData}
+             deleteState={deleteStatus}
++            eventConfigType={webhookData?.eventConfigType}
+             header={
+-              EDIT_HEADER_WEBHOOKS_TITLE[webhookData?.webhookType || 'generic']
++              EDIT_HEADER_WEBHOOKS_TITLE[
++                webhookData?.eventConfigType || 'generic'
++              ]
+             }
+             mode={FormSubmitType.EDIT}
+             saveState={status}
+-            webhookType={webhookData?.webhookType}
+             onCancel={handleCancel}
+             onDelete={handleDelete}
+             onSave={handleSave}
+diff --git a/openmetadata-ui/src/main/resources/ui/src/pages/MsTeamsPage/MsTeamsPage.component.tsx b/openmetadata-ui/src/main/resources/ui/src/pages/MsTeamsPage/MsTeamsPage.component.tsx
+index 34c7397ec..443c595c3 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/pages/MsTeamsPage/MsTeamsPage.component.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/pages/MsTeamsPage/MsTeamsPage.component.tsx
+@@ -25,9 +25,9 @@ import {
+ } from '../../constants/constants';
+ import {
+   Status,
+-  Webhook,
+-  WebhookType,
+-} from '../../generated/entity/events/webhook';
++  EventConfig,
++  EventConfigType,
++} from '../../generated/entity/events/eventConfig';
+ import { Paging } from '../../generated/type/paging';
+ import jsonData from '../../jsons/en';
+ import { showErrorToast } from '../../utils/ToastUtils';
+@@ -36,7 +36,7 @@ const MsTeamsPage = () => {
+   const history = useHistory();
+   const [isLoading, setIsLoading] = useState<boolean>(true);
+   const [paging, setPaging] = useState<Paging>(pagingObject);
+-  const [data, setData] = useState<Array<Webhook>>([]);
++  const [data, setData] = useState<Array<EventConfig>>([]);
+   const [selectedStatus, setSelectedStatus] = useState<Status[]>([]);
+   const [currentPage, setCurrentPage] = useState(1);
+ 
+@@ -44,7 +44,7 @@ const MsTeamsPage = () => {
+     setIsLoading(true);
+     getWebhooks(paging, undefined, {
+       limit: PAGE_SIZE_MEDIUM,
+-      webhookType: WebhookType.Msteams,
++      eventConfigType: EventConfigType.Msteams,
+     })
+       .then((res) => {
+         if (res.data) {
+@@ -84,7 +84,7 @@ const MsTeamsPage = () => {
+   };
+ 
+   const handleAddWebhook = () => {
+-    history.push(getAddWebhookPath(WebhookType.Msteams));
++    history.push(getAddWebhookPath(EventConfigType.Msteams));
+   };
+ 
+   const handleClickWebhook = (name: string) => {
+@@ -99,9 +99,9 @@ const MsTeamsPage = () => {
+     <WebhooksV1
+       currentPage={currentPage}
+       data={data}
++      eventConfigType={EventConfigType.Msteams}
+       paging={paging}
+       selectedStatus={selectedStatus}
+-      webhookType={WebhookType.Msteams}
+       onAddWebhook={handleAddWebhook}
+       onClickWebhook={handleClickWebhook}
+       onPageChange={handlePageChange}
+diff --git a/openmetadata-ui/src/main/resources/ui/src/pages/SlackSettingsPage/SlackSettingsPage.component.tsx b/openmetadata-ui/src/main/resources/ui/src/pages/SlackSettingsPage/SlackSettingsPage.component.tsx
+index 94740550f..43bfcb62f 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/pages/SlackSettingsPage/SlackSettingsPage.component.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/pages/SlackSettingsPage/SlackSettingsPage.component.tsx
+@@ -22,15 +22,15 @@ import {
+   getEditWebhookPath,
+   PAGE_SIZE_MEDIUM,
+ } from '../../constants/constants';
+-import { WebhookType } from '../../generated/api/events/createWebhook';
+-import { Status, Webhook } from '../../generated/entity/events/webhook';
++import { EventConfigType } from '../../generated/api/events/createEventConfig';
++import { Status, EventConfig } from '../../generated/entity/events/eventConfig';
+ import { Paging } from '../../generated/type/paging';
+ import jsonData from '../../jsons/en';
+ import { showErrorToast } from '../../utils/ToastUtils';
+ 
+ export const SlackSettingsPage = () => {
+   const [isLoading, setIsLoading] = useState<boolean>(true);
+-  const [data, setData] = useState<Webhook[]>([]);
++  const [data, setData] = useState<EventConfig[]>([]);
+ 
+   const history = useHistory();
+ 
+@@ -42,7 +42,7 @@ export const SlackSettingsPage = () => {
+     setIsLoading(true);
+     getWebhooks(paging, undefined, {
+       limit: PAGE_SIZE_MEDIUM,
+-      webhookType: WebhookType.Slack,
++      eventConfigType: EventConfigType.Slack,
+     })
+       .then((response) => {
+         if (response.data) {
+@@ -86,7 +86,7 @@ export const SlackSettingsPage = () => {
+   };
+ 
+   const handleAddWebhook = () => {
+-    history.push(getAddWebhookPath(WebhookType.Slack));
++    history.push(getAddWebhookPath(EventConfigType.Slack));
+   };
+ 
+   useEffect(() => {
+@@ -97,9 +97,9 @@ export const SlackSettingsPage = () => {
+     <WebhooksV1
+       currentPage={currentPage}
+       data={data}
++      eventConfigType={EventConfigType.Slack}
+       paging={paging}
+       selectedStatus={selectedStatus}
+-      webhookType={WebhookType.Slack}
+       onAddWebhook={handleAddWebhook}
+       onClickWebhook={handleClickWebhook}
+       onPageChange={handlePageChange}
+diff --git a/openmetadata-ui/src/main/resources/ui/src/pages/WebhooksPage/WebhooksPageV1.component.tsx b/openmetadata-ui/src/main/resources/ui/src/pages/WebhooksPage/WebhooksPageV1.component.tsx
+index 6e7ae79c3..ae1416ffb 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/pages/WebhooksPage/WebhooksPageV1.component.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/pages/WebhooksPage/WebhooksPageV1.component.tsx
+@@ -25,9 +25,9 @@ import {
+ } from '../../constants/constants';
+ import {
+   Status,
+-  Webhook,
+-  WebhookType,
+-} from '../../generated/entity/events/webhook';
++  EventConfig,
++  EventConfigType,
++} from '../../generated/entity/events/eventConfig';
+ import { Paging } from '../../generated/type/paging';
+ import jsonData from '../../jsons/en';
+ import { showErrorToast } from '../../utils/ToastUtils';
+@@ -36,7 +36,7 @@ const WebhooksPageV1 = () => {
+   const history = useHistory();
+   const [isLoading, setIsLoading] = useState<boolean>(true);
+   const [paging, setPaging] = useState<Paging>(pagingObject);
+-  const [data, setData] = useState<Array<Webhook>>([]);
++  const [data, setData] = useState<Array<EventConfig>>([]);
+   const [selectedStatus, setSelectedStatus] = useState<Status[]>([]);
+   const [currentPage, setCurrentPage] = useState(1);
+ 
+@@ -46,7 +46,7 @@ const WebhooksPageV1 = () => {
+       .then((res) => {
+         if (res.data) {
+           const genericWebhooks = res.data.filter(
+-            (d) => d.webhookType === WebhookType.Generic
++            (d) => d.eventConfigType === EventConfigType.Generic
+           );
+           setData(genericWebhooks);
+           setPaging(res.paging);
+@@ -103,9 +103,9 @@ const WebhooksPageV1 = () => {
+     <WebhooksV1
+       currentPage={currentPage}
+       data={data}
++      eventConfigType={EventConfigType.Generic}
+       paging={paging}
+       selectedStatus={selectedStatus}
+-      webhookType={WebhookType.Generic}
+       onAddWebhook={handleAddWebhook}
+       onClickWebhook={handleClickWebhook}
+       onPageChange={handlePageChange}
+diff --git a/openmetadata-ui/src/main/resources/ui/src/utils/CommonUtils.tsx b/openmetadata-ui/src/main/resources/ui/src/utils/CommonUtils.tsx
+index 5942f7b4f..f4f16021c 100644
+--- a/openmetadata-ui/src/main/resources/ui/src/utils/CommonUtils.tsx
++++ b/openmetadata-ui/src/main/resources/ui/src/utils/CommonUtils.tsx
+@@ -73,7 +73,7 @@ import { GlossaryTerm } from '../generated/entity/data/glossaryTerm';
+ import { Pipeline } from '../generated/entity/data/pipeline';
+ import { Table } from '../generated/entity/data/table';
+ import { Topic } from '../generated/entity/data/topic';
+-import { Webhook } from '../generated/entity/events/webhook';
++import { EventConfig } from '../generated/entity/events/eventConfig';
+ import { ThreadTaskStatus, ThreadType } from '../generated/entity/feed/thread';
+ import { Policy } from '../generated/entity/policies/policy';
+ import { PipelineType } from '../generated/entity/services/ingestionPipelines/ingestionPipeline';
+@@ -664,7 +664,7 @@ export const getEntityName = (
+     | Policy
+     | Role
+     | GlossaryTerm
+-    | Webhook
++    | EventConfig
+     | Bot
+ ) => {
+   return entity?.displayName || entity?.name || '';

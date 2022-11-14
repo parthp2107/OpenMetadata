@@ -24,7 +24,10 @@ import {
 import React from 'react';
 import { MemoryRouter } from 'react-router';
 import { FormSubmitType } from '../../enums/form.enum';
-import { Webhook, WebhookType } from '../../generated/entity/events/webhook';
+import {
+  EventConfig,
+  EventConfigType,
+} from '../../generated/entity/events/eventConfig';
 import AddWebhook from './AddWebhook';
 import { AddWebhookProps } from './AddWebhook.interface';
 
@@ -377,10 +380,10 @@ describe.skip('Test AddWebhook component', () => {
       const { container } = render(
         <AddWebhook
           {...addWebhookProps}
-          data={mockData as Webhook}
+          data={mockData as EventConfig}
+          eventConfigType={EventConfigType.Generic}
           header="Edit Webhook"
           mode={FormSubmitType.EDIT}
-          webhookType={WebhookType.Generic}
         />,
         {
           wrapper: MemoryRouter,

@@ -40,10 +40,10 @@ import { UrlEntityCharRegEx } from '../../constants/regex.constants';
 import { FormSubmitType } from '../../enums/form.enum';
 import { PageLayoutType } from '../../enums/layout.enum';
 import {
-  CreateWebhook,
+  CreateEventConfig,
   EventFilter,
-} from '../../generated/api/events/createWebhook';
-import { WebhookType } from '../../generated/entity/events/webhook';
+} from '../../generated/api/events/createEventConfig';
+import { EventConfigType } from '../../generated/entity/events/eventConfig';
 import { Operation } from '../../generated/entity/policies/policy';
 import {
   errorMsg,
@@ -87,7 +87,7 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
   saveState = 'initial',
   deleteState = 'initial',
   allowAccess = true,
-  webhookType = WebhookType.Generic,
+  eventConfigType = EventConfigType.Generic,
   onCancel,
   onDelete,
   onSave,
@@ -224,7 +224,7 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
 
   const handleSave = () => {
     if (validateForm()) {
-      const oData: CreateWebhook = {
+      const oData: CreateEventConfig = {
         name,
         description: markdownRef.current?.getEditorContent() || undefined,
         endpoint: endpointUrl,
@@ -233,7 +233,7 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
         timeout: connectionTimeout,
         enabled: active,
         secretKey,
-        webhookType,
+        eventConfigType,
       };
 
       onSave(oData);
@@ -319,12 +319,12 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
   const fetchRightPanel = useCallback(() => {
     return (
       <div className="tw-px-2">
-        <CardV1 heading={CONFIGURE_TEXT[webhookType].heading} id="webhook">
-          {CONFIGURE_TEXT[webhookType].body}
+        <CardV1 heading={CONFIGURE_TEXT[eventConfigType].heading} id="webhook">
+          {CONFIGURE_TEXT[eventConfigType].body}
         </CardV1>
       </div>
     );
-  }, [webhookType]);
+  }, [eventConfigType]);
 
   return (
     <div className="add-webhook-container">
@@ -338,10 +338,13 @@ const AddWebhook: FunctionComponent<AddWebhookProps> = ({
                 url: ROUTES.SETTINGS,
               },
               {
-                name: webhookType === WebhookType.Slack ? 'Slack' : 'Webhook',
+                name:
+                  eventConfigType === EventConfigType.Slack
+                    ? 'Slack'
+                    : 'EventConfig',
                 url: getSettingPath(
                   GlobalSettingsMenuCategory.INTEGRATIONS,
-                  webhookType === WebhookType.Slack
+                  eventConfigType === EventConfigType.Slack
                     ? GlobalSettingOptions.SLACK
                     : GlobalSettingOptions.WEBHOOK
                 ),

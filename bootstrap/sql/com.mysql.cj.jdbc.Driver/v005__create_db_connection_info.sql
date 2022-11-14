@@ -303,3 +303,16 @@ SET JSON = JSON_INSERT(
 		'$.serviceType','GluePipeline'
 	)
 where serviceType='Glue';
+
+DROP TABLE webhook_entity;
+
+CREATE TABLE IF NOT EXISTS event_configuration (
+    id VARCHAR(36) GENERATED ALWAYS AS (json ->> '$.id') STORED NOT NULL,
+    name VARCHAR(256) GENERATED ALWAYS AS (json ->> '$.name') NOT NULL,
+    json JSON NOT NULL,
+    status VARCHAR(256) GENERATED ALWAYS AS (json ->> '$.status') NOT NULL,
+    eventConfigType VARCHAR(36) GENERATED ALWAYS AS (json ->> '$.eventConfigType') NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE (name)
+    -- No versioning, updatedAt, updatedBy, or changeDescription fields for eventConfig
+);

@@ -24,10 +24,10 @@ import {
   ROUTES,
 } from '../../constants/constants';
 import {
+  EventConfig,
+  EventConfigType,
   Status,
-  Webhook,
-  WebhookType,
-} from '../../generated/entity/events/webhook';
+} from '../../generated/entity/events/eventConfig';
 import { Paging } from '../../generated/type/paging';
 import jsonData from '../../jsons/en';
 import { showErrorToast } from '../../utils/ToastUtils';
@@ -36,7 +36,7 @@ const WebhooksPageV1 = () => {
   const history = useHistory();
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [paging, setPaging] = useState<Paging>(pagingObject);
-  const [data, setData] = useState<Array<Webhook>>([]);
+  const [data, setData] = useState<Array<EventConfig>>([]);
   const [selectedStatus, setSelectedStatus] = useState<Status[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -46,7 +46,7 @@ const WebhooksPageV1 = () => {
       .then((res) => {
         if (res.data) {
           const genericWebhooks = res.data.filter(
-            (d) => d.webhookType === WebhookType.Generic
+            (d) => d.eventConfigType === EventConfigType.Generic
           );
           setData(genericWebhooks);
           setPaging(res.paging);
@@ -103,9 +103,9 @@ const WebhooksPageV1 = () => {
     <WebhooksV1
       currentPage={currentPage}
       data={data}
+      eventConfigType={EventConfigType.Generic}
       paging={paging}
       selectedStatus={selectedStatus}
-      webhookType={WebhookType.Generic}
       onAddWebhook={handleAddWebhook}
       onClickWebhook={handleClickWebhook}
       onPageChange={handlePageChange}

@@ -12,10 +12,10 @@
  */
 
 import {
-  CreateWebhook,
-  WebhookType,
-} from '../generated/api/events/createWebhook';
-import { Webhook } from '../generated/entity/events/webhook';
+  CreateEventConfig,
+  EventConfigType,
+} from '../generated/api/events/createEventConfig';
+import { EventConfig } from '../generated/entity/events/eventConfig';
 import { Paging } from '../generated/type/paging';
 import { getURLWithQueryFields } from '../utils/APIUtils';
 import APIClient from './index';
@@ -23,7 +23,7 @@ import APIClient from './index';
 export const getWebhooks = async (
   paging?: string,
   arrQueryFields?: string,
-  params?: { limit: number; webhookType?: WebhookType }
+  params?: { limit: number; eventConfigType?: EventConfigType }
 ) => {
   const url = getURLWithQueryFields(
     '/webhook',
@@ -31,7 +31,7 @@ export const getWebhooks = async (
     paging ? paging : undefined
   );
 
-  const response = await APIClient.get<{ data: Webhook[]; paging: Paging }>(
+  const response = await APIClient.get<{ data: EventConfig[]; paging: Paging }>(
     url,
     {
       params,
@@ -41,18 +41,18 @@ export const getWebhooks = async (
   return response.data;
 };
 
-export const addWebhook = async (data: CreateWebhook) => {
+export const addWebhook = async (data: CreateEventConfig) => {
   const url = '/webhook';
 
-  const response = await APIClient.post<CreateWebhook>(url, data);
+  const response = await APIClient.post<CreateEventConfig>(url, data);
 
   return response.data;
 };
 
-export const updateWebhook = async (data: CreateWebhook) => {
+export const updateWebhook = async (data: CreateEventConfig) => {
   const url = '/webhook';
 
-  const response = await APIClient.put<CreateWebhook>(url, data);
+  const response = await APIClient.put<CreateEventConfig>(url, data);
 
   return response.data;
 };
@@ -60,7 +60,7 @@ export const updateWebhook = async (data: CreateWebhook) => {
 export const deleteWebhook = async (id: string) => {
   const url = `/webhook/${id}`;
 
-  const response = await APIClient.delete<Webhook>(url);
+  const response = await APIClient.delete<EventConfig>(url);
 
   return response.data;
 };
@@ -68,7 +68,7 @@ export const deleteWebhook = async (id: string) => {
 export const getWebhookByName = async (name: string) => {
   const url = `/webhook/name/${name}`;
 
-  const response = await APIClient.get<Webhook>(url);
+  const response = await APIClient.get<EventConfig>(url);
 
   return response.data;
 };
@@ -76,7 +76,7 @@ export const getWebhookByName = async (name: string) => {
 export const getWebhookById = async (id: string) => {
   const url = `/webhook/${id}`;
 
-  const response = await APIClient.get<Webhook>(url);
+  const response = await APIClient.get<EventConfig>(url);
 
   return response.data;
 };

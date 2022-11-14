@@ -123,6 +123,18 @@
     ]
   },
   {
+    "name" : "eventConfig",
+    "operations" : [
+      "Create",
+      "Delete",
+      "ViewAll",
+      "EditAll",
+      "EditDescription",
+      "EditDisplayName",
+      "EditCustomFields"
+    ]
+  },
+  {
     "name" : "glossary",
     "operations" : [
       "Create",
@@ -369,18 +381,6 @@
   },
   {
     "name" : "user",
-    "operations" : [
-      "Create",
-      "Delete",
-      "ViewAll",
-      "EditAll",
-      "EditDescription",
-      "EditDisplayName",
-      "EditCustomFields"
-    ]
-  },
-  {
-    "name" : "webhook",
     "operations" : [
       "Create",
       "Delete",

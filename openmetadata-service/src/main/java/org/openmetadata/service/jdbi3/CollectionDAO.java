@@ -87,6 +87,7 @@ import org.openmetadata.schema.settings.SettingsType;
 import org.openmetadata.schema.tests.TestCase;
 import org.openmetadata.schema.tests.TestDefinition;
 import org.openmetadata.schema.tests.TestSuite;
+import org.openmetadata.schema.type.EventConfig;
 import org.openmetadata.schema.type.Relationship;
 import org.openmetadata.schema.type.TagCategory;
 import org.openmetadata.schema.type.TagLabel;
@@ -94,7 +95,6 @@ import org.openmetadata.schema.type.TaskStatus;
 import org.openmetadata.schema.type.ThreadType;
 import org.openmetadata.schema.type.UsageDetails;
 import org.openmetadata.schema.type.UsageStats;
-import org.openmetadata.schema.type.Webhook;
 import org.openmetadata.schema.util.EntitiesCount;
 import org.openmetadata.schema.util.ServicesCount;
 import org.openmetadata.service.Entity;
@@ -218,7 +218,7 @@ public interface CollectionDAO {
   ChangeEventDAO changeEventDAO();
 
   @CreateSqlObject
-  WebhookDAO webhookDAO();
+  EventConfigDAO eventConfigDAO();
 
   @CreateSqlObject
   TypeEntityDAO typeEntityDAO();
@@ -1793,15 +1793,15 @@ public interface CollectionDAO {
     }
   }
 
-  interface WebhookDAO extends EntityDAO<Webhook> {
+  interface EventConfigDAO extends EntityDAO<EventConfig> {
     @Override
     default String getTableName() {
-      return "webhook_entity";
+      return "event_configuration";
     }
 
     @Override
-    default Class<Webhook> getEntityClass() {
-      return Webhook.class;
+    default Class<EventConfig> getEntityClass() {
+      return EventConfig.class;
     }
 
     @Override
@@ -1815,7 +1815,7 @@ public interface CollectionDAO {
     }
 
     @SqlQuery("SELECT json FROM <table>")
-    List<String> listAllWebhooks(@Define("table") String table);
+    List<String> listAllEventConfig(@Define("table") String table);
   }
 
   interface TagCategoryDAO extends EntityDAO<TagCategory> {

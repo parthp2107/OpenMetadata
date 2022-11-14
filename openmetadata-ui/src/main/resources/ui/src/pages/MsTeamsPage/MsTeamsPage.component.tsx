@@ -24,10 +24,10 @@ import {
   pagingObject,
 } from '../../constants/constants';
 import {
+  EventConfig,
+  EventConfigType,
   Status,
-  Webhook,
-  WebhookType,
-} from '../../generated/entity/events/webhook';
+} from '../../generated/entity/events/eventConfig';
 import { Paging } from '../../generated/type/paging';
 import jsonData from '../../jsons/en';
 import { showErrorToast } from '../../utils/ToastUtils';
@@ -36,7 +36,7 @@ const MsTeamsPage = () => {
   const history = useHistory();
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [paging, setPaging] = useState<Paging>(pagingObject);
-  const [data, setData] = useState<Array<Webhook>>([]);
+  const [data, setData] = useState<Array<EventConfig>>([]);
   const [selectedStatus, setSelectedStatus] = useState<Status[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -44,7 +44,7 @@ const MsTeamsPage = () => {
     setIsLoading(true);
     getWebhooks(paging, undefined, {
       limit: PAGE_SIZE_MEDIUM,
-      webhookType: WebhookType.Msteams,
+      eventConfigType: EventConfigType.Msteams,
     })
       .then((res) => {
         if (res.data) {
@@ -84,7 +84,7 @@ const MsTeamsPage = () => {
   };
 
   const handleAddWebhook = () => {
-    history.push(getAddWebhookPath(WebhookType.Msteams));
+    history.push(getAddWebhookPath(EventConfigType.Msteams));
   };
 
   const handleClickWebhook = (name: string) => {
@@ -99,9 +99,9 @@ const MsTeamsPage = () => {
     <WebhooksV1
       currentPage={currentPage}
       data={data}
+      eventConfigType={EventConfigType.Msteams}
       paging={paging}
       selectedStatus={selectedStatus}
-      webhookType={WebhookType.Msteams}
       onAddWebhook={handleAddWebhook}
       onClickWebhook={handleClickWebhook}
       onPageChange={handlePageChange}

@@ -22,15 +22,15 @@ import {
   getEditWebhookPath,
   PAGE_SIZE_MEDIUM,
 } from '../../constants/constants';
-import { WebhookType } from '../../generated/api/events/createWebhook';
-import { Status, Webhook } from '../../generated/entity/events/webhook';
+import { EventConfigType } from '../../generated/api/events/createEventConfig';
+import { EventConfig, Status } from '../../generated/entity/events/eventConfig';
 import { Paging } from '../../generated/type/paging';
 import jsonData from '../../jsons/en';
 import { showErrorToast } from '../../utils/ToastUtils';
 
 export const SlackSettingsPage = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [data, setData] = useState<Webhook[]>([]);
+  const [data, setData] = useState<EventConfig[]>([]);
 
   const history = useHistory();
 
@@ -42,7 +42,7 @@ export const SlackSettingsPage = () => {
     setIsLoading(true);
     getWebhooks(paging, undefined, {
       limit: PAGE_SIZE_MEDIUM,
-      webhookType: WebhookType.Slack,
+      eventConfigType: EventConfigType.Slack,
     })
       .then((response) => {
         if (response.data) {
@@ -86,7 +86,7 @@ export const SlackSettingsPage = () => {
   };
 
   const handleAddWebhook = () => {
-    history.push(getAddWebhookPath(WebhookType.Slack));
+    history.push(getAddWebhookPath(EventConfigType.Slack));
   };
 
   useEffect(() => {
@@ -97,9 +97,9 @@ export const SlackSettingsPage = () => {
     <WebhooksV1
       currentPage={currentPage}
       data={data}
+      eventConfigType={EventConfigType.Slack}
       paging={paging}
       selectedStatus={selectedStatus}
-      webhookType={WebhookType.Slack}
       onAddWebhook={handleAddWebhook}
       onClickWebhook={handleClickWebhook}
       onPageChange={handlePageChange}

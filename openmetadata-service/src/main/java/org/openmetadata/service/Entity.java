@@ -121,6 +121,7 @@ public final class Entity {
   //
   public static final String INGESTION_PIPELINE = "ingestionPipeline";
   public static final String WEBHOOK = "webhook";
+  public static final String EVENT_CONFIG = "eventConfig";
 
   //
   // Reserved names in OpenMetadata

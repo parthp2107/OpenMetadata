@@ -3,7 +3,7 @@ import { cloneDeep, isEmpty, map, startCase } from 'lodash';
 import React, { Key, useEffect, useMemo, useState } from 'react';
 import { getInitialFilters } from '../../axiosAPIs/eventFiltersAPI';
 import { TERM_ALL } from '../../constants/constants';
-import { EventFilter } from '../../generated/api/events/createWebhook';
+import { EventFilter } from '../../generated/api/events/createEventConfig';
 import { Filters } from '../../generated/settings/settings';
 import { getEventFilterFromTree } from '../../pages/ActivityFeedSettingsPage/ActivityFeedSettingsPage.utils';
 import './../../pages/ActivityFeedSettingsPage/ActivityFeedSettingsPage.style.less';

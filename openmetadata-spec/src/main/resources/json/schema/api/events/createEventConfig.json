@@ -1,19 +1,19 @@
 {
-  "$id": "https://open-metadata.org/schema/api/events/createWebhook.json",
+  "$id": "https://open-metadata.org/schema/api/events/createEventConfig.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "CreateWebhook",
-  "description": "This schema defines webhook for receiving events from OpenMetadata",
+  "title": "CreateEventConfig",
+  "description": "This schema defines eventConfig for receiving events from OpenMetadata",
   "type": "object",
-  "javaType": "org.openmetadata.schema.api.events.CreateWebhook",
+  "javaType": "org.openmetadata.schema.api.events.CreateEventConfig",
   "javaInterfaces": ["org.openmetadata.schema.CreateEntity"],
 
   "properties": {
     "name": {
-      "description": "Unique name of the application receiving webhook events.",
+      "description": "Unique name of the application receiving eventConfig events.",
       "$ref": "../../type/basic.json#/definitions/entityName"
     },
     "displayName": {
-      "description": "Display Name that identifies this webhook.",
+      "description": "Display Name that identifies this eventConfig.",
       "type": "string"
     },
     "description": {
@@ -21,7 +21,7 @@
       "$ref": "../../type/basic.json#/definitions/markdown"
     },
     "endpoint": {
-      "description": "Endpoint to receive the webhook events over POST requests.",
+      "description": "Endpoint to receive the eventConfig events over POST requests.",
       "type": "string",
       "format": "uri"
     },
@@ -43,17 +43,21 @@
       "default": 10
     },
     "enabled": {
-      "description": "When set to `true`, the webhook event notification is enabled. Set it to `false` to disable the subscription. (Default `true`)",
+      "description": "When set to `true`, the eventConfig event notification is enabled. Set it to `false` to disable the subscription. (Default `true`)",
       "type": "boolean",
       "default": true
     },
     "secretKey": {
-      "description": "Secret set by the webhook client used for computing HMAC SHA256 signature of webhook payload and sent in `X-OM-Signature` header in POST requests to publish the events.",
+      "description": "Secret set by the eventConfig client used for computing HMAC SHA256 signature of eventConfig payload and sent in `X-OM-Signature` header in POST requests to publish the events.",
       "type": "string"
     },
-    "webhookType": {
-      "description": "Type of webhook slack,generic,msteams etc",
-      "$ref": "../../entity/events/webhook.json#/definitions/webhookType"
+    "eventConfigType": {
+      "description": "Type of eventConfig slack,generic,msteams etc",
+      "$ref": "../../entity/events/eventConfig.json#/definitions/eventConfigType"
+    },
+    "elasticSearchConfig": {
+      "description": "Configuration of Elastic Search",
+      "$ref": "../../configuration/elasticSearchConfiguration.json"
     }
   },
   "required": ["name", "endpoint", "eventFilters"],

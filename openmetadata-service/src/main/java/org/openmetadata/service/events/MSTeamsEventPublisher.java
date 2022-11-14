@@ -1,4 +1,4 @@
-package org.openmetadata.service.slack;
+package org.openmetadata.service.events;
 
 import java.util.concurrent.TimeUnit;
 import javax.ws.rs.client.Client;
@@ -8,26 +8,27 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import lombok.extern.slf4j.Slf4j;
 import org.openmetadata.schema.type.ChangeEvent;
-import org.openmetadata.schema.type.Webhook;
-import org.openmetadata.service.events.WebhookPublisher;
+import org.openmetadata.schema.type.EventConfig;
 import org.openmetadata.service.events.errors.EventPublisherException;
 import org.openmetadata.service.jdbi3.CollectionDAO;
-import org.openmetadata.service.resources.events.EventResource.ChangeEventList;
+import org.openmetadata.service.resources.events.EventResource;
+import org.openmetadata.service.slack.SlackRetriableException;
+import org.openmetadata.service.slack.TeamsMessage;
 import org.openmetadata.service.util.ChangeEventParser;
 
 @Slf4j
-public class SlackWebhookEventPublisher extends WebhookPublisher {
+public class MSTeamsEventPublisher extends EventPublisher {
   private final Invocation.Builder target;
   private final Client client;
 
-  public SlackWebhookEventPublisher(Webhook webhook, CollectionDAO dao) {
-    super(webhook, dao);
-    String slackWebhookURL = webhook.getEndpoint().toString();
+  public MSTeamsEventPublisher(EventConfig eventConfig, CollectionDAO dao) {
+    super(eventConfig, dao);
+    String msTeamsWebhookURL = eventConfig.getEndpoint().toString();
     ClientBuilder clientBuilder = ClientBuilder.newBuilder();
-    clientBuilder.connectTimeout(webhook.getTimeout(), TimeUnit.SECONDS);
-    clientBuilder.readTimeout(webhook.getReadTimeout(), TimeUnit.SECONDS);
+    clientBuilder.connectTimeout(eventConfig.getTimeout(), TimeUnit.SECONDS);
+    clientBuilder.readTimeout(eventConfig.getReadTimeout(), TimeUnit.SECONDS);
     client = clientBuilder.build();
-    target = client.target(slackWebhookURL).request();
+    target = client.target(msTeamsWebhookURL).request();
   }
 
   @Override
@@ -43,12 +44,12 @@ public class SlackWebhookEventPublisher extends WebhookPublisher {
   }
 
   @Override
-  public void publish(ChangeEventList events) throws EventPublisherException {
+  public void publish(EventResource.ChangeEventList events) throws EventPublisherException {
     for (ChangeEvent event : events.getData()) {
       try {
-        SlackMessage slackMessage = ChangeEventParser.buildSlackMessage(event);
+        TeamsMessage teamsMessage = ChangeEventParser.buildTeamsMessage(event);
         Response response =
-            target.post(javax.ws.rs.client.Entity.entity(slackMessage, MediaType.APPLICATION_JSON_TYPE));
+            target.post(javax.ws.rs.client.Entity.entity(teamsMessage, MediaType.APPLICATION_JSON_TYPE));
         if (response.getStatus() >= 300 && response.getStatus() < 400) {
           throw new EventPublisherException(
               "Slack webhook callback is getting redirected. " + "Please check your configuration");
