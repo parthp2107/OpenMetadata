@@ -14,7 +14,9 @@
 package org.openmetadata.service.jdbi3;
 
 import static org.openmetadata.common.utils.CommonUtil.listOrEmpty;
+import static org.openmetadata.schema.type.Include.NON_DELETED;
 import static org.openmetadata.service.Entity.TEAM;
+import static org.openmetadata.service.Entity.getEntityReferenceById;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -199,6 +201,19 @@ public class UserRepository extends EntityRepository<User> {
     LOG.debug("Checking user entries for test users");
     Set<String> testUsers = new HashSet<>(config.getAuthorizerConfiguration().getTestPrincipals());
     UserUtil.addUsers(testUsers, domain, null);
+  }
+
+  public List<EntityReference> getRolesReference(List<String> roles) throws IOException {
+    List<EntityReference> entityReferences = new ArrayList<>();
+    for (String role : roles) {
+      String id = daoCollection.roleDAO().checkRoleExists(role);
+      if (id != null) {
+        EntityReference roleReference = getEntityReferenceById(Entity.ROLE, UUID.fromString(id), NON_DELETED);
+        entityReferences.add(roleReference);
+        // assigning the roles to the user
+      }
+    }
+    return entityReferences;
   }
 
   private List<EntityReference> getOwns(User user) throws IOException {

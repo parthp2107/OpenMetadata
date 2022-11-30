@@ -54,11 +54,14 @@ public class JwtFilter implements ContainerRequestFilter {
   public static final String AUTHORIZATION_HEADER = "Authorization";
   public static final String TOKEN_PREFIX = "Bearer";
   public static final String BOT_CLAIM = "isBot";
+  public static final String ROLE_CLAIM = "roles";
   private List<String> jwtPrincipalClaims;
   private JwkProvider jwkProvider;
   private String principalDomain;
   private boolean enforcePrincipalDomain;
   private String providerType;
+  private final TokenRoleUtil tokenRoleUtil = new TokenRoleUtil();
+  private String providerName;
   public static final List<String> EXCLUDED_ENDPOINTS =
       List.of(
           "v1/config",
@@ -80,6 +83,7 @@ public class JwtFilter implements ContainerRequestFilter {
       AuthenticationConfiguration authenticationConfiguration, AuthorizerConfiguration authorizerConfiguration) {
     this.providerType = authenticationConfiguration.getProvider();
     this.jwtPrincipalClaims = authenticationConfiguration.getJwtPrincipalClaims();
+    this.providerName = authenticationConfiguration.getProviderName();
 
     ImmutableList.Builder<URL> publicKeyUrlsBuilder = ImmutableList.builder();
     for (String publicKeyUrlStr : authenticationConfiguration.getPublicKeyUrls()) {
@@ -132,11 +136,12 @@ public class JwtFilter implements ContainerRequestFilter {
       validateBotToken(tokenFromHeader, userName);
     }
 
+    String roles = tokenRoleUtil.fetchRolesFromToken(claims, providerType, providerName);
     // Setting Security Context
     CatalogPrincipal catalogPrincipal = new CatalogPrincipal(userName);
     String scheme = requestContext.getUriInfo().getRequestUri().getScheme();
     CatalogSecurityContext catalogSecurityContext =
-        new CatalogSecurityContext(catalogPrincipal, scheme, SecurityContext.DIGEST_AUTH);
+        new CatalogSecurityContext(catalogPrincipal, scheme, SecurityContext.DIGEST_AUTH, roles);
     LOG.debug("SecurityContext {}", catalogSecurityContext);
     requestContext.setSecurityContext(catalogSecurityContext);
   }

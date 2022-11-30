@@ -23,12 +23,20 @@ public class CatalogSecurityContext implements SecurityContext {
   private final Principal principal;
   private final String scheme;
   private final String authenticationScheme;
+  private String roles;
 
   public static final String OPENID_AUTH = "openid";
   public static final String JWT_AUTH = "jwt";
 
   public CatalogSecurityContext(Principal principal, String scheme) {
     this(principal, scheme, SecurityContext.DIGEST_AUTH);
+  }
+
+  public CatalogSecurityContext(Principal principal, String scheme, String authenticationScheme, String roles) {
+    this.principal = principal;
+    this.scheme = scheme;
+    this.authenticationScheme = authenticationScheme;
+    this.roles = roles;
   }
 
   public CatalogSecurityContext(Principal principal, String scheme, String authenticationScheme) {
@@ -40,6 +48,10 @@ public class CatalogSecurityContext implements SecurityContext {
   @Override
   public Principal getUserPrincipal() {
     return principal;
+  }
+
+  public String getRoles() {
+    return roles;
   }
 
   @Override

@@ -18,9 +18,16 @@ import lombok.Getter;
 
 public class CatalogPrincipal implements Principal {
   @Getter private final String name;
+  @Getter private final String roles;
 
   public CatalogPrincipal(String name) {
     this.name = name;
+    this.roles = null;
+  }
+
+  public CatalogPrincipal(String name, String roles) {
+    this.name = name;
+    this.roles = roles;
   }
 
   @Override

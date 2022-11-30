@@ -58,6 +58,7 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
+import javax.ws.rs.container.ContainerRequestContext;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
@@ -69,6 +70,7 @@ import org.jetbrains.annotations.Nullable;
 import org.openmetadata.schema.EntityInterface;
 import org.openmetadata.schema.api.data.RestoreEntity;
 import org.openmetadata.schema.api.security.AuthenticationConfiguration;
+import org.openmetadata.schema.api.security.AuthorizerConfiguration;
 import org.openmetadata.schema.api.teams.CreateUser;
 import org.openmetadata.schema.auth.BasicAuthMechanism;
 import org.openmetadata.schema.auth.ChangePasswordRequest;
@@ -105,8 +107,10 @@ import org.openmetadata.service.secrets.SecretsManager;
 import org.openmetadata.service.secrets.SecretsManagerFactory;
 import org.openmetadata.service.security.AuthorizationException;
 import org.openmetadata.service.security.Authorizer;
+import org.openmetadata.service.security.TokenRoleUtil;
 import org.openmetadata.service.security.auth.AuthenticatorHandler;
 import org.openmetadata.service.security.auth.BotTokenCache;
+import org.openmetadata.service.security.auth.CatalogSecurityContext;
 import org.openmetadata.service.security.jwt.JWTTokenGenerator;
 import org.openmetadata.service.security.policyevaluator.OperationContext;
 import org.openmetadata.service.security.policyevaluator.ResourceContext;
@@ -133,7 +137,10 @@ public class UserResource extends EntityResource<User, UserRepository> {
   private final TokenRepository tokenRepository;
   private boolean isEmailServiceEnabled;
   private AuthenticationConfiguration authenticationConfiguration;
+  private AuthorizerConfiguration authorizerConfiguration;
   private final AuthenticatorHandler authHandler;
+  private CatalogSecurityContext catalogSecurityContext;
+  private TokenRoleUtil tokenRoleUtil;
 
   @Override
   public User addHref(UriInfo uriInfo, User user) {
@@ -156,6 +163,7 @@ public class UserResource extends EntityResource<User, UserRepository> {
   @Override
   public void initialize(OpenMetadataApplicationConfig config) {
     this.authenticationConfiguration = config.getAuthenticationConfiguration();
+    this.authorizerConfiguration = config.getAuthorizerConfiguration();
     SmtpSettings smtpSettings = config.getSmtpSettings();
     this.isEmailServiceEnabled = smtpSettings != null && smtpSettings.getEnableSmtpServer();
     this.dao.initializeUsers(config);
@@ -318,7 +326,7 @@ public class UserResource extends EntityResource<User, UserRepository> {
       })
   public User getByName(
       @Context UriInfo uriInfo,
-      @Context SecurityContext securityContext,
+      @Context ContainerRequestContext containerRequestContext,
       @PathParam("name") String name,
       @Parameter(
               description = "Fields requested in the returned resource",
@@ -332,7 +340,16 @@ public class UserResource extends EntityResource<User, UserRepository> {
           @DefaultValue("non-deleted")
           Include include)
       throws IOException {
-    return decryptOrNullify(securityContext, getByNameInternal(uriInfo, securityContext, name, fieldsParam, include));
+    User user = getByNameInternal(uriInfo, containerRequestContext.getSecurityContext(), name, fieldsParam, include);
+    if (authorizerConfiguration.getInheritRolesFromSSO().equals(true)) {
+      List<EntityReference> roles = tokenRoleUtil.checkRoles(user, containerRequestContext, dao, uriInfo);
+      if (!user.getRoles().equals(roles)) {
+        user.setRoles(roles);
+        RestUtil.PutResponse<User> response = dao.createOrUpdate(uriInfo, user);
+        addHref(uriInfo, response.getEntity());
+      }
+    }
+    return decryptOrNullify(containerRequestContext.getSecurityContext(), user);
   }
 
   @GET
@@ -459,10 +476,11 @@ public class UserResource extends EntityResource<User, UserRepository> {
         @ApiResponse(responseCode = "400", description = "Bad request")
       })
   public Response createUser(
-      @Context UriInfo uriInfo, @Context SecurityContext securityContext, @Valid CreateUser create) throws IOException {
-    User user = getUser(securityContext, create);
+      @Context UriInfo uriInfo, @Context ContainerRequestContext containerRequestContext, @Valid CreateUser create)
+      throws IOException {
+    User user = getUser(containerRequestContext.getSecurityContext(), create);
     if (Boolean.TRUE.equals(create.getIsAdmin())) {
-      authorizer.authorizeAdmin(securityContext);
+      authorizer.authorizeAdmin(containerRequestContext.getSecurityContext());
     }
     if (Boolean.TRUE.equals(create.getIsBot())) {
       addAuthMechanismToBot(user, create, uriInfo);
@@ -486,6 +504,8 @@ public class UserResource extends EntityResource<User, UserRepository> {
       // else the user will get a mail if configured smtp
     }
     // TODO do we need to authenticate user is creating himself?
+    List<EntityReference> roles = tokenRoleUtil.checkRoles(user, containerRequestContext, dao, uriInfo);
+    user.setRoles(roles);
     addHref(uriInfo, dao.create(uriInfo, user));
     if (isBasicAuth() && isEmailServiceEnabled) {
       try {
@@ -500,7 +520,7 @@ public class UserResource extends EntityResource<User, UserRepository> {
       }
     }
     Response response = Response.created(user.getHref()).entity(user).build();
-    decryptOrNullify(securityContext, (User) response.getEntity());
+    decryptOrNullify(containerRequestContext.getSecurityContext(), (User) response.getEntity());
     return response;
   }
 

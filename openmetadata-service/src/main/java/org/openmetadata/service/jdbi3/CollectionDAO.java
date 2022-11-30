@@ -1950,6 +1950,14 @@ public interface CollectionDAO {
     default String getNameColumn() {
       return "name";
     }
+
+    @ConnectionAwareSqlQuery(value = "SELECT id FROM role_entity WHERE name = :name", connectionType = MYSQL)
+    @ConnectionAwareSqlQuery(value = "SELECT id FROM role_entity WHERE name = :name", connectionType = POSTGRES)
+    String checkRoleExists(@Bind("name") String name);
+
+    @ConnectionAwareSqlQuery(value = "SELECT count(*) FROM user_entity WHERE email = :email", connectionType = MYSQL)
+    @ConnectionAwareSqlQuery(value = "SELECT count(*) FROM user_entity WHERE email = :email", connectionType = POSTGRES)
+    int checkEmailExists(@Bind("email") String email);
   }
 
   interface TeamDAO extends EntityDAO<Team> {
