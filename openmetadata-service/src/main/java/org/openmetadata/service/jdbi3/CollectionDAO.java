@@ -57,6 +57,7 @@ import org.openmetadata.schema.entity.Bot;
 import org.openmetadata.schema.entity.Type;
 import org.openmetadata.schema.entity.data.Chart;
 import org.openmetadata.schema.entity.data.Dashboard;
+import org.openmetadata.schema.entity.data.DataReport;
 import org.openmetadata.schema.entity.data.Database;
 import org.openmetadata.schema.entity.data.DatabaseSchema;
 import org.openmetadata.schema.entity.data.Glossary;
@@ -165,6 +166,9 @@ public interface CollectionDAO {
 
   @CreateSqlObject
   ReportDAO reportDAO();
+
+  @CreateSqlObject
+  DataReportDAO dataReportDAO();
 
   @CreateSqlObject
   TopicDAO topicDAO();
@@ -1680,6 +1684,47 @@ public interface CollectionDAO {
     default String getNameColumn() {
       return "fullyQualifiedName";
     }
+  }
+
+  interface DataReportDAO extends EntityDAO<DataReport> {
+    @Override
+    default String getTableName() {
+      return "data_report_entity";
+    }
+
+    @Override
+    default Class<DataReport> getEntityClass() {
+      return DataReport.class;
+    }
+
+    @Override
+    default boolean supportsSoftDelete() {
+      return false;
+    }
+
+    @Override
+    default String getNameColumn() {
+      return "name";
+    }
+
+    @SqlQuery("SELECT json FROM data_report_entity")
+    List<String> listAllDataReportConfig();
+    //
+    //    @ConnectionAwareSqlUpdate(
+    //        value =
+    //            "INSERT INTO data_report_entity(fullyQualifiedName, dataReportType, endpoint, json) "
+    //                + "VALUES (:fullyQualifiedName, :dataReportType, :endpoint, :json)",
+    //        connectionType = MYSQL)
+    //    @ConnectionAwareSqlUpdate(
+    //        value =
+    //            "INSERT INTO entity_extension_time_series(fullyQualifiedName, dataReportType, endpoint, json) "
+    //                + "VALUES (:fullyQualifiedName, :dataReportType, :endpoint, (:json :: jsonb))",
+    //        connectionType = POSTGRES)
+    //    void insert(
+    //        @Bind("fullyQualifiedName") String fullyQualifiedName,
+    //        @Bind("dataReportType") String dataReportType,
+    //        @Bind("endpoint") String endpoint,
+    //        @Bind("json") String json);
   }
 
   interface TableDAO extends EntityDAO<Table> {
