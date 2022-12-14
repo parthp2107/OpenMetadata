@@ -31,14 +31,10 @@ public class ReportScheduler {
 
   private static final ConcurrentHashMap<UUID, JobKey> reportJobKeyMap = new ConcurrentHashMap<>();
 
-  private final RestHighLevelClient restHighLevelClient;
-  private DataInsightChartRepository chartRepository;
-  private final CollectionDAO dao;
-  private Scheduler reportScheduler;
+  private final DataInsightChartRepository chartRepository;
+  private final Scheduler reportScheduler = new StdSchedulerFactory().getScheduler();
 
-  public ReportScheduler(RestHighLevelClient restHighLevelClient, CollectionDAO dao) {
-    this.restHighLevelClient = restHighLevelClient;
-    this.dao = dao;
+  public ReportScheduler(CollectionDAO dao) throws SchedulerException {
     this.chartRepository = new DataInsightChartRepository(dao);
   }
 
@@ -69,7 +65,6 @@ public class ReportScheduler {
     try {
       JobDetail jobDetail = jobBuilder(dataReport, client);
       Trigger trigger = trigger(dataReport.getScheduleConfig());
-      this.reportScheduler = new StdSchedulerFactory().getScheduler();
       reportScheduler.start();
       reportScheduler.scheduleJob(jobDetail, trigger);
       reportJobKeyMap.put(dataReport.getId(), jobDetail.getKey());

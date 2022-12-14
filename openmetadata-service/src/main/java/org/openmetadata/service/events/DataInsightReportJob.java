@@ -1,7 +1,8 @@
 package org.openmetadata.service.events;
 
 import static java.time.temporal.TemporalAdjusters.previous;
-import static org.openmetadata.schema.dataInsight.DataInsightChartResult.DataInsightChartType.PAGE_VIEWS_BY_ENTITIES;
+import static org.openmetadata.schema.dataInsight.DataInsightChartResult.DataInsightChartType.PERCENTAGE_OF_ENTITIES_WITH_DESCRIPTION_BY_TYPE;
+import static org.openmetadata.schema.dataInsight.DataInsightChartResult.DataInsightChartType.PERCENTAGE_OF_ENTITIES_WITH_OWNER_BY_TYPE;
 import static org.openmetadata.service.Entity.DATA_REPORT;
 import static org.openmetadata.service.elasticsearch.ElasticSearchIndexDefinition.ElasticSearchIndexType.ENTITY_REPORT_DATA_INDEX;
 import static org.openmetadata.service.resources.dataReports.DataReportResource.ES_REST_CLIENT;
@@ -11,6 +12,7 @@ import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -25,10 +27,12 @@ import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.openmetadata.schema.dataInsight.DataInsightChartResult;
 import org.openmetadata.schema.dataInsight.type.PercentageOfEntitiesWithDescriptionByType;
+import org.openmetadata.schema.dataInsight.type.PercentageOfEntitiesWithOwnerByType;
 import org.openmetadata.schema.entity.data.DataReport;
 import org.openmetadata.service.jdbi3.DataInsightChartRepository;
 import org.openmetadata.service.util.EmailUtil;
 import org.openmetadata.service.util.GraphUtil;
+import org.quartz.CronExpression;
 import org.quartz.Job;
 import org.quartz.JobExecutionContext;
 import org.quartz.JobExecutionException;
@@ -43,20 +47,28 @@ public class DataInsightReportJob implements Job {
     RestHighLevelClient client =
         (RestHighLevelClient) jobExecutionContext.getJobDetail().getJobDataMap().get(ES_REST_CLIENT);
     DataReport dataReport = (DataReport) jobExecutionContext.getJobDetail().getJobDataMap().get(DATA_REPORT);
-    Long previousSunday = LocalDateTime.now().with(previous(DayOfWeek.SUNDAY)).toEpochSecond(ZoneOffset.UTC) * 1000;
-    Long currentTime = LocalDateTime.now().toEpochSecond(ZoneOffset.UTC) * 1000;
+    Date nextValidTime;
+    try {
+      nextValidTime = new CronExpression(dataReport.getScheduleConfig()).getNextValidTimeAfter(new Date());
+    } catch (ParseException ex) {
+      throw new RuntimeException(ex);
+    }
+        Long currentTime = Instant.now().toEpochMilli();
+        Long timeDifference = nextValidTime.getTime() - currentTime;
+        Long scheduleTime = currentTime - timeDifference;
     try {
       // Aggregate date for Description
-      String descriptionUrl = buildDescriptionUrl(repository, client, previousSunday, currentTime);
+      String descriptionUrl = buildDescriptionUrl(repository, client, scheduleTime, currentTime);
+      String ownerUrl = buildOwnerUrl(repository, client, scheduleTime, currentTime);
       //  repository.
       for (String email : dataReport.getEndpointConfiguration().getRecipientMails()) {
         EmailUtil.getInstance()
             .sendDataInsightEmailNotificationToUser(
                 email,
-                "http://localhost:8585/data-insights",
+                String.format("%s/data-insights", EmailUtil.getInstance().getOMUrl()),
                 descriptionUrl,
-                descriptionUrl,
-                "http://mohit.com",
+                ownerUrl,
+                EmailUtil.getInstance().getSupportUrl(),
                 EmailUtil.getInstance().getDataInsightReportSubject(),
                 EmailUtil.DATA_INSIGHT_REPORT_TEMPLATE);
       }
@@ -67,17 +79,23 @@ public class DataInsightReportJob implements Job {
   }
 
   private String buildDescriptionUrl(
-      DataInsightChartRepository repository, RestHighLevelClient client, Long previousSunday, Long currentTime)
+      DataInsightChartRepository repository, RestHighLevelClient client, Long scheduleTime, Long currentTime)
       throws IOException, ParseException {
     SearchRequest searchRequest =
         repository.buildSearchRequest(
-            previousSunday, currentTime, null, null, PAGE_VIEWS_BY_ENTITIES, ENTITY_REPORT_DATA_INDEX.indexName);
+            scheduleTime,
+            currentTime,
+            null,
+            null,
+            PERCENTAGE_OF_ENTITIES_WITH_DESCRIPTION_BY_TYPE,
+            ENTITY_REPORT_DATA_INDEX.indexName);
     SearchResponse searchResponse = client.search(searchRequest, RequestOptions.DEFAULT);
     DataInsightChartResult processedData =
-        repository.processDataInsightChartResult(searchResponse, PAGE_VIEWS_BY_ENTITIES);
+        repository.processDataInsightChartResult(searchResponse, PERCENTAGE_OF_ENTITIES_WITH_DESCRIPTION_BY_TYPE);
 
     Map<String, List<PercentageOfEntitiesWithDescriptionByType>> sortedDataMap = new HashMap<>();
-    Map<String, Map<String, Long>> graphData = new HashMap<>();
+    List<String> entityType = new ArrayList<>();
+    Map<String, List<PercentageOfEntitiesWithDescriptionByType>> dateMap = new HashMap<>();
     for (Object data : processedData.getData()) {
       PercentageOfEntitiesWithDescriptionByType formattedData = (PercentageOfEntitiesWithDescriptionByType) data;
       List<PercentageOfEntitiesWithDescriptionByType> listChartType;
@@ -88,6 +106,7 @@ public class DataInsightReportJob implements Job {
       }
       listChartType.add(formattedData);
       sortedDataMap.put(formattedData.getEntityType(), listChartType);
+      entityType.add(formattedData.getEntityType());
     }
     for (var entry : sortedDataMap.entrySet()) {
       for (PercentageOfEntitiesWithDescriptionByType formattedData : entry.getValue()) {
@@ -95,16 +114,66 @@ public class DataInsightReportJob implements Job {
         String justDate = new SimpleDateFormat("dd/MM/yyyy").format(date);
         // put data to map
         List<PercentageOfEntitiesWithDescriptionByType> listChartType;
-        if (sortedDataMap.containsKey(justDate)) {
-          listChartType = sortedDataMap.get(justDate);
+        if (dateMap.containsKey(justDate)) {
+          listChartType = dateMap.get(justDate);
         } else {
           listChartType = new ArrayList<>();
         }
         listChartType.add(formattedData);
-        sortedDataMap.put(justDate, listChartType);
+        dateMap.put(justDate, listChartType);
       }
-      System.out.println(entry.getKey() + "/" + entry.getValue());
     }
-    return GraphUtil.buildDescriptionImageUrl(sortedDataMap);
+    sortedDataMap.putAll(dateMap);
+    return GraphUtil.buildDescriptionImageUrl(dateMap, entityType);
+  }
+
+  private String buildOwnerUrl(
+      DataInsightChartRepository repository, RestHighLevelClient client, Long scheduleTime, Long currentTime)
+      throws ParseException, IOException {
+    SearchRequest searchRequest =
+        repository.buildSearchRequest(
+            scheduleTime,
+            currentTime,
+            null,
+            null,
+            PERCENTAGE_OF_ENTITIES_WITH_OWNER_BY_TYPE,
+            ENTITY_REPORT_DATA_INDEX.indexName);
+    SearchResponse searchResponse = client.search(searchRequest, RequestOptions.DEFAULT);
+    DataInsightChartResult processedData =
+        repository.processDataInsightChartResult(searchResponse, PERCENTAGE_OF_ENTITIES_WITH_OWNER_BY_TYPE);
+
+    Map<String, List<PercentageOfEntitiesWithOwnerByType>> sortedDataMap = new HashMap<>();
+    List<String> entityType = new ArrayList<>();
+    Map<String, List<PercentageOfEntitiesWithOwnerByType>> dateMap = new HashMap<>();
+    Map<String, Map<String, Long>> graphData = new HashMap<>();
+    for (Object data : processedData.getData()) {
+      PercentageOfEntitiesWithOwnerByType formattedData = (PercentageOfEntitiesWithOwnerByType) data;
+      List<PercentageOfEntitiesWithOwnerByType> listChartType;
+      if (sortedDataMap.containsKey(formattedData.getEntityType())) {
+        listChartType = sortedDataMap.get(formattedData.getEntityType());
+      } else {
+        listChartType = new ArrayList<>();
+      }
+      listChartType.add(formattedData);
+      sortedDataMap.put(formattedData.getEntityType(), listChartType);
+      entityType.add(formattedData.getEntityType());
+    }
+    for (var entry : sortedDataMap.entrySet()) {
+      for (PercentageOfEntitiesWithOwnerByType formattedData : entry.getValue()) {
+        Date date = new Date(formattedData.getTimestamp());
+        String justDate = new SimpleDateFormat("dd/MM/yyyy").format(date);
+        // put data to map
+        List<PercentageOfEntitiesWithOwnerByType> listChartType;
+        if (dateMap.containsKey(justDate)) {
+          listChartType = dateMap.get(justDate);
+        } else {
+          listChartType = new ArrayList<>();
+        }
+        listChartType.add(formattedData);
+        dateMap.put(justDate, listChartType);
+      }
+    }
+    sortedDataMap.putAll(dateMap);
+    return GraphUtil.buildOwnerImageUrl(dateMap, entityType);
   }
 }

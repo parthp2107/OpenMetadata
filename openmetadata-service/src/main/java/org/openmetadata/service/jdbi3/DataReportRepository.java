@@ -46,19 +46,29 @@ public class DataReportRepository extends EntityRepository<DataReport> {
     // No relationship to store
   }
 
+  @Override
+  public void restorePatchAttributes(DataReport original, DataReport updated) {
+    updated.withId(original.getId()).withName(original.getName());
+  }
+
+  @Override
+  public DataReportUpdater getUpdater(DataReport original, DataReport updated, Operation operation) {
+    return new DataReportUpdater(original, updated, operation);
+  }
+
   private Job getJob(UUID id) {
     return dataReportJobMap.get(id);
   }
 
-  public void addDataReportConfig(DataReport dataReport, RestHighLevelClient client) {
-    reportScheduler = new ReportScheduler(client, daoCollection);
+  public void addDataReportConfig(DataReport dataReport, RestHighLevelClient client) throws SchedulerException {
+    reportScheduler = new ReportScheduler(daoCollection);
     reportScheduler.startDataInsightEmailReportPublisher(dataReport, client);
     Job job = new DataInsightReportJob();
     dataReportJobMap.put(dataReport.getId(), job);
   }
 
   public void updateDataReportConfig(DataReport dataReport, RestHighLevelClient client) throws SchedulerException {
-    reportScheduler = new ReportScheduler(client, daoCollection);
+    reportScheduler = new ReportScheduler(daoCollection);
     Job previousJob = getJob(dataReport.getId());
     if (previousJob == null) {
       addDataReportConfig(dataReport, client);
@@ -70,9 +80,22 @@ public class DataReportRepository extends EntityRepository<DataReport> {
   public void deleteDataReportConfig(DataReport dataReport, RestHighLevelClient client) throws SchedulerException {
     Job job = dataReportJobMap.remove(dataReport.getId());
     if (job != null) {
-      reportScheduler = new ReportScheduler(client, daoCollection);
+      reportScheduler = new ReportScheduler(daoCollection);
       reportScheduler.deleteDataInsightEmailReportPublisher(dataReport.getId());
       LOG.info("Report Config deleted");
+    }
+  }
+
+  public class DataReportUpdater extends EntityUpdater {
+    public DataReportUpdater(DataReport original, DataReport updated, Operation operation) {
+      super(original, updated, operation);
+    }
+
+    @Override
+    public void entitySpecificUpdate() throws IOException {
+      recordChange("scheduleConfig", original.getScheduleConfig(), updated.getScheduleConfig());
+      recordChange("endpointType", original.getEndpointType(), updated.getEndpointType());
+      recordChange("endpointConfiguration", original.getEndpointConfiguration(), updated.getEndpointConfiguration());
     }
   }
 }

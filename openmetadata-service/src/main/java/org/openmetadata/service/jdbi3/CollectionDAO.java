@@ -1709,22 +1709,6 @@ public interface CollectionDAO {
 
     @SqlQuery("SELECT json FROM data_report_entity")
     List<String> listAllDataReportConfig();
-    //
-    //    @ConnectionAwareSqlUpdate(
-    //        value =
-    //            "INSERT INTO data_report_entity(fullyQualifiedName, dataReportType, endpoint, json) "
-    //                + "VALUES (:fullyQualifiedName, :dataReportType, :endpoint, :json)",
-    //        connectionType = MYSQL)
-    //    @ConnectionAwareSqlUpdate(
-    //        value =
-    //            "INSERT INTO entity_extension_time_series(fullyQualifiedName, dataReportType, endpoint, json) "
-    //                + "VALUES (:fullyQualifiedName, :dataReportType, :endpoint, (:json :: jsonb))",
-    //        connectionType = POSTGRES)
-    //    void insert(
-    //        @Bind("fullyQualifiedName") String fullyQualifiedName,
-    //        @Bind("dataReportType") String dataReportType,
-    //        @Bind("endpoint") String endpoint,
-    //        @Bind("json") String json);
   }
 
   interface TableDAO extends EntityDAO<Table> {

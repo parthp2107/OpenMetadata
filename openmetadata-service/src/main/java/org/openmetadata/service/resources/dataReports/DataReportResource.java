@@ -218,7 +218,7 @@ public class DataReportResource extends EntityResource<DataReport, DataReportRep
       })
   public Response createDataReportConfig(
       @Context UriInfo uriInfo, @Context SecurityContext securityContext, @Valid CreateDataReport create)
-      throws IOException {
+      throws IOException, SchedulerException {
     DataReport dataReport = getDataReport(create, securityContext.getUserPrincipal().getName());
     Response response = create(uriInfo, securityContext, dataReport);
     dao.addDataReportConfig(dataReport, client);

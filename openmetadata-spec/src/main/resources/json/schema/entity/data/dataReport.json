@@ -2,12 +2,26 @@
   "$id": "https://open-metadata.org/schema/entity/data/reportData.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "DataReport",
+  "description": "Data Report",
   "type": "object",
   "javaType": "org.openmetadata.schema.entity.data.DataReport",
   "javaInterfaces": [
     "org.openmetadata.schema.EntityInterface"
   ],
-  "description": "Data Report",
+  "definitions": {
+    "dataReportType": {
+      "description": "Type of DataReport - dataInsight",
+      "type": "string",
+      "javaType": "org.openmetadata.schema.entity.data.DataReportType",
+      "default": "dataInsight",
+      "enum": ["dataInsight"],
+      "javaEnums": [
+        {
+          "name": "dataInsight"
+        }
+      ]
+    }
+  },
   "properties": {
     "id": {
       "description": "Unique identifier for a result.",
@@ -30,19 +44,8 @@
       "$ref": "../../type/basic.json#/definitions/markdown"
     },
     "dataReportType": {
-      "description": "Type of DataReport - dataInsight",
-      "type": "string",
-      "javaType": "org.openmetadata.schema.entity.data.DataReportType",
-      "enum": [
-        "testSuite", "dataInsight"],
-      "javaEnums": [
-        {
-          "name": "testSuite"
-        },
-        {
-          "name": "dataInsight"
-        }
-      ]
+      "description": "Type of report",
+      "$ref": "#/definitions/dataReportType"
     },
     "updatedAt": {
       "description": "Last update time corresponding to the new version of the entity in Unix epoch time milliseconds.",
