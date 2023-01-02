@@ -86,6 +86,11 @@ jobs:
           sudo make install_antlr_cli
           echo 'testcontainers.reuse.enable=true' >> $HOME/.testcontainers.properties
 
+      - name: Install gpg secret key
+        run: |
+          cat <(echo -e "${{ secrets.OSSRH_GPG_SECRET_KEY }}") | gpg --batch --import
+          gpg --list-secret-keys --keyid-format LONG
+
       - name: Build PR with Maven
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
