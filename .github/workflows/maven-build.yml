@@ -14,24 +14,25 @@ name: Maven CI
 on:
   push:
     branches:
-      - "gitAction-mvnPublish"
-    pull_request:
-      branches:
-        - "main"
-      paths:
-        - ".github/workflows/publish-package.yml"
+      - main
+      - '0.[0-9]+.[0-9]+'
+    paths:
+      - "openmetadata-service/**"
+      - "openmetadata-ui/**"
+      - "openmetadata-spec/src/main/resources/json/schema/**"
+  pull_request_target:
+    types: [labeled, opened, synchronize, reopened]
 
 permissions:
   contents: read
   checks: write
 
-concurrency: 
+concurrency:
   group: maven-build-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 jobs:
   test:
     runs-on: ${{matrix.os}}
-    environment: publish
 
     strategy:
       matrix:
@@ -70,39 +71,20 @@ jobs:
         with:
           java-version: '11'
           distribution: 'adopt'
-          server-id: ossrh
-          server-username: MAVEN_USERNAME
-          server-password: MAVEN_PASSWORD
-          gpg-private-key: ${{ secrets.OSSRH_GPG_SECRET_KEY }}
-          gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
       - name: Install Ubuntu dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev python3-venv librdkafka-dev gcc libsasl2-dev build-essential libssl-dev libffi-dev \
           librdkafka-dev unixodbc-dev libevent-dev
-      
+
       - name: Setup Test Containers Properties
         run: |
           sudo make install_antlr_cli
           echo 'testcontainers.reuse.enable=true' >> $HOME/.testcontainers.properties
-
-      - name: Setup settings-security.xml
-        run: |
-          rm -rf ~/.m2/settings-security.xml
-          echo "<settingsSecurity><master>${{ secrets.MAVEN_MASTER_PASSWORD }}</master></settingsSecurity>" > ~/.m2/settings-security.xml
-
-      - name: Install gpg secret key
-        run: |
-          cat <(echo -e "${{ secrets.OSSRH_GPG_SECRET_KEY }}") | gpg --batch --import
-          gpg --list-secret-keys --keyid-format LONG
-
       - name: Build PR with Maven
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
-          MAVEN_GPG_PASSPHRASE: ${{ secrets.OSSRH_GPG_SECRET_KEY_PASSWORD }}
         if: ${{ github.event_name == 'pull_request_target' }}
         run: |
           git fetch --no-tags https://github.com/open-metadata/OpenMetadata.git +refs/heads/main:refs/remotes/origin/main
@@ -113,7 +95,6 @@ jobs:
               -Dsonar.pullrequest.github.repository=OpenMetadata \
               -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }} \
               -Dsonar.pullrequest.provider=github clean install
-
       - name: Build with Maven
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -125,7 +106,6 @@ jobs:
           cd ./docker/local-metadata
           docker compose down --remove-orphans
           sudo rm -rf ${PWD}/docker-volume
-
       - name: Publish Test Report
         if: ${{ always() }}
         uses: scacap/action-surefire-report@v1
