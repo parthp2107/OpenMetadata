@@ -46,6 +46,6 @@ src/antlr/generated
 # Generated TS
 src/generated/
 
-# Cypress
+# cypress
 **/*.spec.js
 cypress/
