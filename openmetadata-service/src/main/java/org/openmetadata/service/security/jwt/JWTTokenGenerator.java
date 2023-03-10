@@ -31,7 +31,7 @@ public class JWTTokenGenerator {
   private static final String EMAIL_CLAIM = "email";
   private static final String IS_BOT_CLAIM = "isBot";
   private static final JWTTokenGenerator INSTANCE = new JWTTokenGenerator();
-  private RSAPrivateKey privateKey;
+  @Getter private RSAPrivateKey privateKey;
   @Getter private RSAPublicKey publicKey;
   private String issuer;
   private String kid;

@@ -67,6 +67,7 @@ import BasicAuthAuthenticator from '../authenticators/basic-auth.authenticator';
 import MsalAuthenticator from '../authenticators/MsalAuthenticator';
 import OidcAuthenticator from '../authenticators/OidcAuthenticator';
 import OktaAuthenticator from '../authenticators/OktaAuthenticator';
+import SamlAuthenticator from '../authenticators/SamlAuthenticator';
 import Auth0Callback from '../callbacks/Auth0Callback/Auth0Callback';
 import { AuthenticatorRef, OidcUser } from './AuthProvider.interface';
 import BasicAuthProvider from './basic-auth.provider';
@@ -438,12 +439,17 @@ export const AuthProvider = ({
       const isSecureMode =
         !isNil(authConfig) && authConfig.provider !== NO_AUTH;
       if (isSecureMode) {
-        const provider = authConfig?.provider;
+        const {
+          provider,
+          providerName,
+          authority,
+          clientId,
+          callbackUrl,
+          samlConfiguration,
+        } = authConfig;
         // show an error toast if provider is null or not supported
-        if (
-          provider &&
-          Object.values(AuthTypes).includes(provider as AuthTypes)
-        ) {
+        const authTypes: Array<string> = Object.values(AuthTypes);
+        if (provider && authTypes.includes(provider)) {
           const configJson = getAuthConfig(authConfig);
           setJwtPrincipalClaims(authConfig.jwtPrincipalClaims);
           initializeAxiosInterceptors();
@@ -527,6 +533,15 @@ export const AuthProvider = ({
           </Auth0Provider>
         );
       }
+      case AuthTypes.SAML: {
+        return (
+          <SamlAuthenticator
+            ref={authenticatorRef}
+            onLogoutSuccess={handleSuccessfulLogout}>
+            {children}
+          </SamlAuthenticator>
+        );
+      }
       case AuthTypes.OKTA: {
         return (
           <OktaAuthProvider onLoginSuccess={handleSuccessfulLogin}>
@@ -595,6 +610,7 @@ export const AuthProvider = ({
         if (
           (location.pathname === ROUTES.SIGNUP && isEmpty(appState.newUser)) ||
           (!location.pathname.includes(ROUTES.CALLBACK) &&
+            location.pathname !== ROUTES.SAML_CALLBACK &&
             location.pathname !== ROUTES.HOME &&
             location.pathname !== ROUTES.SIGNUP &&
             location.pathname !== ROUTES.REGISTER &&
